@@ -1,0 +1,871 @@
+=============================================
+  VOZATIVA — Contexto do Projeto (v5)
+  Última atualização: 2026-08-04 (Rodada 11)
+=============================================
+
+── SOBRE O PROJETO ──────────────────────────
+Aplicativo web de treino de fala para pessoas com deficiência auditiva ou
+em acompanhamento fonoaudiológico. Inspirado na mecânica de progressão do
+Duolingo (trilha de fases) e em elementos sociais (amigos, ranking). O
+usuário visualiza um fonema/sílaba, ouve sua pronúncia, grava sua voz e
+recebe feedback automático e contínuo — sem precisar clicar para parar.
+Conta com dois perfis de conta: PACIENTE (treina os fonemas, adiciona
+amigos, acompanha o ranking) e FONOAUDIÓLOGO/MÉDICO (acompanha o progresso
+de pacientes vinculados e pode adicionar/reordenar exercícios
+personalizados para cada um).
+Foco em acessibilidade, simplicidade, progressão por fases, engajamento
+social e acompanhamento clínico remoto.
+
+── LINGUAGEM E TECNOLOGIAS ──────────────────
+- HTML5 (semântico, sem frameworks)
+- CSS3 puro (variáveis CSS, animações, dark-mode por classe, mobile-first,
+  com adaptações dedicadas para retrato, paisagem e telas largas)
+- JavaScript ES6+ puro (sem dependências externas, sem build step)
+- Web Audio API — visualizador de waveform por volume, com um GainNode
+  amplificando o sinal do microfone (ganho 2,2x) antes da análise; o
+  volume também serve de reserva automática para decidir acerto/erro
+  quando o reconhecimento de fala real (abaixo) não está disponível ou
+  falha, reagindo ao FIM da fala em vez de esperar um tempo fixo
+- Web Speech API — SpeechSynthesis ATIVA (pronuncia cada fonema em voz
+  feminina ou masculina) e SpeechRecognition ATIVA (compara o texto
+  reconhecido da fala do usuário com o fonema/palavra esperado; heurística
+  de volume/duração mantida como reserva automática para navegadores sem
+  suporte ou falha de permissão — ver seção de TREINO)
+- Pointer Events API — usada para o arrastar-e-soltar (drag-and-drop) de
+  reordenação de fases, funciona com mouse e toque
+- LocalStorage — única camada de persistência (contas, sessão, progresso,
+  tema, tours já vistos, conteúdo personalizado por paciente, amizades)
+- Notifications API (permissão real de notificações do browser)
+- Fontes: Google Fonts — Nunito + Baloo 2
+
+── ARQUITETURA ──────────────────────────────
+Três arquivos principais (sem build step, abrir index.html ou servir como
+estático):
+  index.html  — todas as telas, modais, painéis, dropdowns
+  style.css   — tokens CSS (claro + escuro), todos os componentes,
+                adaptações de layout por orientação/tamanho de tela
+  script.js   — toda a lógica: navegação, autenticação, treino, painel do
+                médico, gráficos, tour guiado, amigos e ranking
+
+Infra de preview local (sem Node/Python disponíveis na máquina):
+  .claude/launch.json         — configuração do servidor de preview
+  .claude/static-server.ps1   — servidor estático mínimo em PowerShell
+                                  (HttpListener), serve os 3 arquivos acima
+
+Telas (todas em index.html, alternadas via showOnlyScreen()):
+  #screen-auth    — login / cadastro (paciente ou fonoaudiólogo)
+  #screen-home    — tela inicial (perfil, configurações, busca, convites)
+  #screen-path    — trilha de progresso (árvore de fases)
+  #screen-app     — tela de treino de uma fase específica
+  #screen-doctor  — painel do médico (pacientes, editor de exercícios)
+
+Padrão de sobreposição:
+  .modal-overlay  — confirmações (sair do app / sair da conta / remover
+                    conta / sair da fase)
+  .panel-overlay  — painéis de edição (perfil / contas / ajuda / amigos /
+                    ranking / editor de exercícios), slide-up e cabeçalho
+                    fixo (sticky)
+  .tour-overlay   — tutorial guiado em spotlight
+
+── MODELO DE DADOS (localStorage) ───────────
+Chave "vozativa_users": objeto { email: usuario }. Campos do usuário:
+  name, email, password, phone, avatar, bio, role ("paciente"|"medico"),
+  accountId (4 dígitos aleatórios, único, identifica a conta — usado para
+  todo vínculo entre contas, nunca o telefone)
+
+  Paciente: doctor (texto livre), linkedDoctors[], pendingInvites[],
+            friends[], friendRequestsSent[], friendRequestsReceived[],
+            progress { completedGroupIds[], attempts{ fonema: {correct,incorrect} } },
+            customContent { groups[] (cada um com id próprio), exercises[]
+            (referenciam groupId, não posição), dicas{}, audio{},
+            groupOrder[] (ordem de exibição das fases, reordenável por
+            drag-and-drop) }
+            — customContent é exclusivo desse paciente; nada dele é
+            herdado por outra conta
+  Médico:   crm, patients[] (vinculados/confirmados), sentInvites[]
+            (aguardando confirmação do paciente)
+
+  Grupos base têm um ID estável (ex.: "vogais", "mp"...) que nunca muda,
+  mesmo que a ordem de exibição seja alterada — por isso reordenar fases
+  não corrompe o progresso já registrado (ver computeLevel() e
+  getUserGroups() em script.js).
+
+  Nível de Aprendizagem: NÃO é um campo salvo — é sempre calculado em
+  tempo real a partir de progress.completedGroupIds.
+
+Outras chaves: vozativa_session_email, vozativa_theme,
+vozativa_tour_home_seen / _path_seen / _app_seen.
+
+── GRUPOS DE DESAFIOS ────────────────────────
+7 grupos base, 65 fonemas no total (médicos podem adicionar grupos e
+exercícios extras por paciente, e reordenar a trilha de cada paciente
+livremente — ver Painel do Médico):
+  Grupo 1 — Vogais (5):   A E I O U
+  Grupo 2 — M e P (10):   MA ME MI MO MU + PA PE PI PO PU
+  Grupo 3 — T e L (10):   TA TE TI TO TU + LA LE LI LO LU
+  Grupo 4 — F e V (10):   FA FE FI FO FU + VA VE VI VO VU
+  Grupo 5 — N e D (10):   NA NE NI NO NU + DA DE DI DO DU
+  Grupo 6 — B e C (10):   BA BE BI BO BU + CA CE CI CO CU
+  Grupo 7 — G e J (10):   GA GE GI GO GU + JA JE JI JO JU
+
+Cada fase da trilha corresponde a UM grupo. Ao treinar uma fase, somente os
+fonemas daquele grupo são exibidos (barra de progresso e contagem são
+sempre relativas à fase atual, nunca à trilha inteira). A ordem das fases
+é, por padrão, a lista acima, mas pode ser personalizada por paciente pelo
+médico (arrastar-e-soltar no Editor de Exercícios).
+
+── FUNCIONALIDADES IMPLANTADAS ──────────────
+
+AUTENTICAÇÃO E CONTAS
+  - Cadastro com seleção de tipo de conta: Paciente ou Fonoaudiólogo(a)
+  - Campos comuns: nome, e-mail, senha (mín. 5 caracteres, com botão de
+    mostrar/ocultar em todos os campos de senha), telefone no formato
+    (XX)X XXXX-XXXX (máscara automática)
+  - Paciente: fonoaudiólogo responsável (texto livre, opcional)
+  - Médico: registro profissional CRFa/CRM — campo numérico, só aceita até
+    6 dígitos (mesma lógica de máscara do ID da conta)
+  - Ícone de mostrar/ocultar senha reflete o ESTADO atual do campo: olho
+    fechado/riscado por padrão (senha oculta, estado inicial) e só passa
+    para o olho aberto depois de clicado (senha revelada) — nunca o
+    contrário
+  - Todas as contas recebem um ID de conta de 4 dígitos totalmente
+    aleatório e único (Math.random, sem sequência ou padrão), usado para
+    vínculo entre contas — nunca o telefone; uma rotina de migração roda
+    no carregamento do app e garante ID único mesmo em contas criadas
+    antes desse recurso existir
+  - Login com e-mail e senha
+  - Cada conta é 100% independente: nenhum campo (nome, foto, recado
+    pessoal, progresso, etc.) é herdado de outra conta ao cadastrar, fazer
+    login ou trocar de conta — todos os campos do perfil são
+    explicitamente preenchidos (ou limpos) a cada troca
+  - Troca de conta: lista todas as contas salvas neste dispositivo,
+    destaca a conta atual (cor diferente + selo "Atual", não clicável),
+    permite alternar entre as demais e remover qualquer uma delas deste
+    dispositivo pelo ícone de lixeira (única forma de remoção — o antigo
+    item redundante no dropdown de perfil foi removido); limpa
+    automaticamente vínculos médico-paciente, convites e amizades que
+    referenciavam a conta removida
+  - Sessão persiste entre recarregamentos (localStorage)
+  - Sair da conta: se houver qualquer conta salva neste dispositivo (a que
+    está saindo ou outras), em vez de ir direto para a tela de
+    cadastro/login, abre uma tela de seleção de conta com o nome de cada
+    conta salva; ao escolher uma, pede a senha daquela conta específica e
+    só entra se ela conferir — a tela de login/cadastro tradicional só
+    aparece se não houver nenhuma conta salva, ou pelo link "Entrar com
+    outro e-mail"
+
+PERFIL
+  - Painel "Meu Perfil" com foto (trocável, refletida no ícone de perfil),
+    selo do tipo de conta, recado pessoal (logo abaixo do selo de
+    tipo de conta), nome, e-mail (fixo), telefone, ID da conta (somente
+    leitura, com botão de copiar com feedback visual)
+  - Paciente: fonoaudiólogo responsável + "Nível de Aprendizagem"
+    (somente leitura — indicador automático de aproveitamento nas fases,
+    não editável: sobe conforme o paciente completa fases)
+  - Médico: registro profissional (editável, validado)
+  - Cabeçalho do painel fixo (sticky): o botão de fechar fica visível o
+    tempo todo, mesmo rolando o conteúdo
+
+BUSCA (somente na tela inicial)
+  - Barra de busca retangular de bordas arredondadas, logo abaixo da linha
+    de ícones (perfil/pacientes/amigos/configurações) na tela inicial —
+    nunca aparece em nenhuma outra tela
+  - Some automaticamente assim que um resultado é escolhido ou assim que
+    qualquer outro menu/painel/tela é aberto (dropdown, perfil, trilha,
+    painel do médico, amigos, etc.)
+  - Busca por nome OU ID; se nada corresponder, mostra "Nenhum resultado
+    encontrado" em vez de simplesmente não mostrar nada
+  - Paciente: busca outros pacientes por nome ou ID e envia pedido de
+    amizade direto pelo resultado da busca
+  - Médico: busca entre os próprios pacientes vinculados por nome ou ID e
+    abre o perfil detalhado diretamente
+
+AMIGOS E RANKING (paciente)
+  - Botão "Amigos" na tela inicial (ícone dedicado, visível só para
+    pacientes) abre uma aba com três listas: pedidos recebidos (com
+    prévia do perfil básico e botões de aceitar/recusar), pedidos
+    enviados (prévia + ícone de carta, aguardando confirmação) e amigos
+    já confirmados — as listas de pedidos/amigos são sempre ordenadas em
+    ordem alfabética pelo nome
+  - Bolinha vermelha no canto superior direito do ícone "Amigos" sempre
+    que houver ao menos um pedido de amizade pendente de aprovação;
+    some automaticamente assim que não houver mais pedidos pendentes
+  - Ao aceitar um pedido, uma mensagem curta ("Você e Fulano agora são
+    amigos!") aparece rapidamente no rodapé da tela como confirmação
+  - Pedido de amizade enviado pela busca da tela inicial, usando o ID do
+    outro paciente
+  - Cada amigo confirmado pode ser removido da lista (ícone de lixeira no
+    card, com confirmação antes de remover) — a remoção desfaz o vínculo
+    dos dois lados
+  - Painel "Ranking de desempenho" (ícone de pódio) lista o próprio
+    usuário e seus amigos ordenados por fases concluídas e % de acerto,
+    destacando o próprio usuário na lista
+  - Cards de perfil (tanto na aba de amigos quanto na lista de pacientes
+    do Painel do Médico) têm tamanho padronizado e imutável — o texto de
+    estatísticas reserva sempre o mesmo espaço (2 linhas), então um card
+    com "0/7 fases" fica do mesmo tamanho que um com estatísticas mais
+    longas
+
+CONVITES MÉDICO ↔ PACIENTE
+  - Médico adiciona paciente digitando apenas o ID de conta (4 dígitos)
+    no Painel do Médico — fluxo de um único campo, sem exigir nome
+  - Ao enviar, aparece uma prévia do perfil básico do paciente (avatar,
+    nome, nível) em "Convites enviados", com um ícone de carta indicando
+    que o convite foi enviado e está aguardando confirmação
+  - Paciente vê um card de convite na tela inicial com o nome do médico e
+    botões "Confirmar" / "Recusar"
+  - Ao confirmar, o vínculo é criado nos dois sentidos e o card de convite
+    enviado desaparece do painel do médico, passando para "Meus pacientes"
+  - Ao aceitar, o campo "Fonoaudiólogo responsável" do paciente é
+    preenchido automaticamente com o nome de quem enviou o convite aceito
+    — sempre sobrescreve o valor anterior, mesmo que já houvesse um texto
+    digitado manualmente ali antes
+
+TRILHA DE PROGRESSO
+  - Tela dedicada com os nós das fases dispostos de baixo para cima (a
+    fase 1 embaixo, a mais avançada em cima), em zigue-zague
+  - Conectores entre os nós seguem a posição real de cada fase na tela
+    (não é mais uma linha reta central): traço contínuo entre fases já
+    concluídas, tracejado rumo às próximas — recalculado dinamicamente
+    (inclusive ao redimensionar a janela); o centro de cada ícone de nó é
+    calculado por posição de layout (offsetLeft/offsetTop, que ignoram
+    transform de CSS), não pelo retângulo visual, garantindo que a linha
+    encontre exatamente o centro do nó mesmo durante a animação de
+    entrada (que desloca o nó temporariamente por transform)
+  - Cada nó é clicável e leva direto ao treino daquele grupo; estado
+    visual: bloqueado (cadeado) / desbloqueado (número) / concluído
+    (medalha dourada)
+  - Fases com exercícios adicionados pelo médico exibem um selo amarelo
+    de intervenção ("i") no canto do nó; enquanto essa fase personalizada
+    ainda não foi concluída, o ícone do nó fica azul e o caminho
+    tracejado aparece tanto antes quanto depois dele (não só depois) —
+    assim que a fase é concluída, o nó volta ao normal (dourado + check)
+    com traço contínuo nos dois lados
+  - A ordem das fases segue a trilha padrão, personalizável por paciente
+    pelo médico; o progresso já conquistado (por ID do grupo) nunca se
+    perde ao reordenar
+  - Uma fase nova (personalizada) adicionada pelo médico entre duas fases
+    já concluídas aparece corretamente na posição certa da trilha, com o
+    mesmo padrão visual das demais fases pendentes (ícone azul, caminho
+    tracejado); e a fase já concluída logo depois dela continua sempre
+    clicável/revisável — ela não fica "travada" só porque uma fase nova
+    e ainda pendente foi inserida bem antes dela na ordem
+  - Ao entrar pela primeira vez a partir de "Iniciar tarefa diária", os
+    nós da trilha surgem em uma animação de cima para baixo, passando por
+    cada fase em sequência (o nó mais alto entra primeiro)
+
+TREINO (por fase) — reconhecimento contínuo
+  - Cada fase mostra e conta apenas os fonemas do seu próprio grupo (não
+    mistura com os demais)
+  - Não é preciso clicar para parar a gravação: o app monitora o volume
+    continuamente enquanto grava
+  - Reconhecimento de fala real (Web Speech API / SpeechRecognition,
+    pt-BR): o texto reconhecido é comparado ao fonema/palavra esperado
+    (minúsculas, sem acento, sem pontuação; aceita igualdade exata ou um
+    contido no outro) — assim que um resultado (parcial ou final) bate,
+    confirma acerto na hora; um resultado final que não bate confirma erro
+    sem esperar o tempo máximo de gravação; reinicia sozinho se o serviço
+    do navegador encerrar a escuta por conta própria em modo contínuo
+  - Se o navegador não suportar SpeechRecognition (ex.: Firefox), ou a
+    permissão do serviço de reconhecimento falhar, cai automaticamente no
+    heurístico por volume + duração (abaixo) só para a gravação afetada —
+    o app nunca trava, apenas fica menos preciso nesse fallback
+  - Captação de áudio otimizada: o microfone é aberto com
+    echoCancellation, noiseSuppression e autoGainControl ativados (pede
+    isso ao próprio navegador) e o sinal passa por um amplificador de
+    software (GainNode, ganho 2,2x) antes de ser analisado — ajuda a
+    captar vozes mais baixas ou ambientes com um pouco de ruído. O
+    analisador de volume também ficou mais responsivo (suavização
+    reduzida), tornando a barra de captação e a detecção de fala mais
+    imediatas
+  - Indicador visual "Captando sua voz…" (pontinho verde pulsante) aparece
+    em tempo real sobre a onda sonora sempre que o volume atual cruza o
+    limiar de reconhecimento — feedback claro e imediato de que a fala
+    está sendo ouvida
+  - Heurístico de reserva: em vez de esperar um tempo fixo baseado no
+    tamanho da palavra, a confirmação automática reage ao FIM da fala —
+    assim que o volume cai e fica abaixo do limiar por ~180ms (após pelo
+    menos ~120ms de fala contínua, para não confirmar um estalo/batida
+    instantânea), a resposta é confirmada. Isso reduz bastante o tempo de
+    espera percebido depois que o paciente termina de falar um fonema
+    curto; um som mais longo do que o plausível para aquele fonema/palavra
+    ainda é registrado como incorreto, como salvaguarda
+  - Margem de 3 segundos de silêncio total a partir do clique em "Gravar
+    Voz": se nada for detectado nesse tempo, a tentativa é registrada como
+    incorreta e uma nova chance começa automaticamente; limite de
+    segurança de 8s de gravação contínua
+  - Um clique manual durante a gravação também confirma/encerra, usando o
+    volume e a duração já captados até aquele momento
+  - Pausa entre uma resposta e o próximo desafio reduzida (550ms → 380ms,
+    ajustada junto com a animação do selo de acerto/erro) para diminuir a
+    demora percebida entre responder e avançar
+  - Caixa do fonema com botão redondo de áudio ao lado (toca a pronúncia
+    via voz sintética ou áudio enviado pelo médico); o texto do fonema
+    encolhe no eixo X para abrir espaço ao botão
+  - Botão de gênero de voz (rosa/azul) no cabeçalho, alterna a voz usada
+    na pronúncia
+  - Barra de progresso segmentada mostra só os fonemas da fase atual;
+    cada segmento já respondido fica colorido conforme o resultado —
+    verde (acerto), vermelho (erro) ou cinza (pulado) — mantendo o
+    histórico visível durante toda a fase, inclusive o último exercício
+    da fase (que antes ficava sempre verde independente do resultado)
+  - Botão "Desafio anterior" fica desativado (visual translúcido e mais
+    escuro) no primeiro exercício de cada fase, já que não há para onde
+    voltar
+  - Selo de acerto/erro (ícone de check ou X) após cada gravação — inclui
+    exercícios personalizados adicionados pelo médico, do mesmo jeito que
+    os fonemas padrão
+  - Sem permissão de microfone concedida, o paciente continua navegando
+    livremente pelo app (trilha, telas de fase, ouvir a pronúncia, pular
+    ou voltar desafios), mas não consegue confirmar nenhum exercício por
+    voz: o botão "Gravar Voz" fica desabilitado e um aviso com botão
+    "Ativar microfone" aparece no lugar da onda sonora, permitindo pedir a
+    permissão de novo a qualquer momento sem recarregar a página
+  - Ao tentar sair de uma fase em andamento, um aviso confirma que o
+    progresso da fase (posição atual) será perdido, com botões de
+    confirmação/negação (ícones de check e X)
+  - Tela de fase concluída: título, mensagem e rótulo do botão adaptados
+    (última fase mostra "Parabéns!" e "Concluir trilha"; fase
+    intermediária mostra "Fase concluída!" e "Próxima fase"), botões
+    invertidos — ação principal (topo, destaque, seta para a direita)
+    leva de volta à trilha, "Reiniciar fase" (embaixo, estilo secundário,
+    ícone de loop) reinicia a mesma fase do zero
+  - Aproveitamento da fase (acertos ÷ total, arredondado para baixo) ≥
+    60%: mensagem sorteada de um banco de 6 frases de conquista, com
+    confete e medalha animados. Aproveitamento < 60%: mensagem sorteada
+    de um banco de 6 frases de incentivo para tentar de novo, sem
+    confete e sem a medalha (o resto da tela — título, estatísticas,
+    botões — permanece igual)
+  - Placar final detalhado e correto: mostra separadamente Propostas,
+    Acertadas, Erradas e Puladas (fala reconhecida como certa soma em
+    "acertadas"; silêncio/tempo esgotado sem match soma em "erradas";
+    "Pular esse desafio" soma em "puladas") e uma frase-resumo em
+    linguagem simples (ex.: "10 questões propostas, 6 acertadas, 3
+    erradas e 1 pulada.") — antes o número exibido somava respostas
+    certas e erradas juntas sob o rótulo "Concluídos", divergindo do
+    cálculo real usado para decidir a mensagem/medalha
+  - Permissão de microfone: perguntada apenas UMA VEZ, na primeira vez que
+    o paciente entra no app (não mais a cada fase); usa a Permissions API
+    do navegador para checar em silêncio se a permissão já foi concedida
+    ou negada antes, sem reabrir a tela de pedido em sessões seguintes
+
+PAINEL DO MÉDICO
+  - Lista "Meus pacientes" com foto, nível, fases concluídas e % de acerto
+    (a busca por esses pacientes acontece na tela inicial, não aqui) —
+    ordenada alfabeticamente pelo nome, em grade de duas colunas
+    centralizadas; com número ímpar de pacientes, o último fica centrado
+    sozinho abaixo das duas colunas, com a mesma largura de um card
+    normal (nunca esticado)
+  - Seção "Convites enviados" com prévia do paciente + selo de carta
+    enviada enquanto aguarda confirmação
+  - Botão "+" individual em cada paciente vinculado abre o Editor de
+    Exercícios exclusivamente para aquele paciente (grupos e exercícios
+    adicionados não afetam nenhum outro paciente — isolamento total)
+  - Editor de Exercícios: criar, EDITAR e EXCLUIR grupos (fases)
+    personalizados e exercícios (sílaba/palavra, instrução de pronúncia,
+    áudio opcional); excluir uma fase remove junto os exercícios dela e
+    limpa a fase de qualquer progresso já registrado para esse paciente.
+    Editar reaproveita o mesmo formulário de "Adicionar" (troca para modo
+    "Salvar alterações"); renomear uma fase é feito direto na lista de
+    ordem, em edição de texto na própria linha
+  - Reordenar as fases do paciente por arrastar-e-soltar (mouse ou toque,
+    via Pointer Events) OU pelos botões de seta para cima/baixo em cada
+    linha — resultado idêntico, mas as setas funcionam 100% só com
+    teclado, sem precisar arrastar nada
+  - Perfil do paciente: progresso por fase (pontos), gráfico de
+    rendimento geral (acertos vs. erros, cores acessíveis verde/vermelho)
+    e lista dos erros mais recorrentes por fonema
+
+TEMA CLARO/ESCURO
+  - Aplica classe .dark-mode no <body>, cores via variáveis CSS
+  - Preferência persistida em localStorage, aplicada antes da primeira
+    renderização (sem "flash" de tema errado)
+  - Botão de alternância presente em todas as telas (topo de cada tela —
+    auth, trilha, treino, painel do médico — e no menu de configurações
+    da tela inicial), nunca sobreposto a outros controles
+
+UI ADAPTATIVA (retrato, paisagem e telas largas)
+  - Layout dedicado para paisagem em telas baixas (celular deitado): tela
+    de treino em duas colunas (fonema à esquerda, dica/onda à direita),
+    cabeçalho e ações compactados, tudo cabe sem rolagem excessiva
+  - Tela de login/cadastro e tela inicial também se reorganizam
+    horizontalmente em paisagem
+  - Em telas largas (tablet/desktop), os contêineres ganham mais largura e
+    listas de pacientes/amigos passam a usar grade de múltiplas colunas,
+    em vez de ficar estreito e centralizado
+  - Independe do tamanho da tela: breakpoints por largura (telas largas) e
+    por orientação/altura (paisagem em celular) combinados
+
+FRASES MOTIVACIONAIS (tela inicial)
+  - A cada retorno à tela inicial (paciente), uma frase de incentivo é
+    sorteada aleatoriamente de um banco de 15 frases, substituindo o
+    antigo texto fixo
+
+SOM E NOTIFICAÇÕES
+  - Beeps sintéticos de navegação/feedback, silenciáveis
+  - Notificações do navegador (permissão real)
+
+TUTORIAL GUIADO E AJUDA
+  - Tour em spotlight (resto da tela ~80% escurecido) na primeira visita a
+    cada tela principal, sempre com margem das bordas (nunca cola nas
+    bordas nem excede o tamanho da tela — tooltip com altura máxima e
+    rolagem própria como salvaguarda)
+  - Ignora e pula automaticamente qualquer alvo que não esteja
+    efetivamente visível na tela atual (evita destaque "fantasma" ao
+    navegar durante o tour)
+  - Botão de ajuda (lâmpada) na tela de treino e na trilha, abre uma
+    central de dúvidas com perguntas frequentes e permite rever o tour
+
+ACESSIBILIDADE E QUALIDADE DE CLIQUE
+  - Todo botão/linha clicável responde em qualquer ponto do seu retângulo
+    (ícone, texto ou espaço vazio) — nenhum filho intercepta o clique
+  - Enquadramento responsivo revisado para diferentes tamanhos e
+    orientações de tela
+  - Navegação 100% operável só com teclado, sem depender de mouse/toque:
+    · Cartões que antes só respondiam a clique (trocar de conta, tela de
+      seleção de conta após sair, resultado da busca, lista de pacientes
+      do médico) agora são alcançáveis por Tab, anunciados como botão
+      para leitor de tela e ativáveis com Enter ou Espaço
+    · Reordenar a trilha de um paciente tem alternativa por teclado
+      (botões de seta, além do arrastar-e-soltar)
+    · Abrir qualquer painel ou modal move o foco automaticamente para
+      dentro dele (primeiro elemento focável); fechar devolve o foco para
+      quem abriu — inclusive com painéis abertos um de dentro do outro
+      (ex.: ranking aberto de dentro do painel de Amigos), cada um na
+      ordem certa
+    · Tab/Shift+Tab ficam presos dentro do painel/modal aberto (não
+      "vazam" para trás, para elementos da tela que estão cobertos)
+    · Esc fecha o overlay mais recente (dropdown, modal ou painel) e
+      devolve o foco a quem abriu; na tela de seleção de conta com senha,
+      volta para a lista de contas
+    · Campos sem rótulo visível (busca, ID do paciente, nome do novo
+      grupo) ganharam aria-label; mensagens de erro/sucesso de formulário
+      ganharam aria-live, para leitores de tela anunciarem
+      automaticamente sem precisar navegar até o texto
+
+── ARMAZENAMENTO E INTEGRIDADE DE DADOS ─────
+  - Foto de perfil é redimensionada (máx. 256px) e recomprimida em JPEG no
+    próprio navegador antes de salvar — evita gravar uma foto de celular
+    de vários MB inteira no localStorage, que tem cota de poucos MB por
+    origem
+  - Áudio de exercício tem limite de 3MB por arquivo, com aviso claro se
+    ultrapassar
+  - Qualquer gravação no localStorage trata erro de cota esgotada: em vez
+    de falhar em silêncio, mostra um aviso curto ("Não foi possível
+    salvar: armazenamento do dispositivo está cheio")
+  - Sincronização entre abas sem sobrescrever dados: a maioria das ações
+    agora grava só as contas realmente alteradas, mesclando com a versão
+    mais recente já salva no localStorage no momento da gravação — uma
+    alteração feita em outra aba (ex.: médico numa aba, paciente treinando
+    em outra) entre a leitura e a gravação desta aba não é mais apagada
+    por engano. Abas também se atualizam sozinhas quando outra aba salva
+    alguma mudança (tela inicial, trilha, painel do médico, amigos e
+    trocar de conta se redesenham com o dado mais novo)
+
+── PENDÊNCIAS / PRÓXIMOS PASSOS ─────────────
+  - Reconhecimento de fala real integrado (Rodada 10); ainda compara o
+    TEXTO reconhecido pelo motor do navegador, não a qualidade fonética/
+    articulatória da pronúncia em si (ex.: não avalia sotaque, clareza ou
+    troca sutil de fonema dentro de uma palavra reconhecida corretamente)
+    — para isso seria necessário um modelo de análise fonética dedicado
+  - Persistência real em backend (hoje tudo vive no localStorage do
+    navegador, portanto é por dispositivo/navegador, não sincroniza entre
+    aparelhos nem é uma "conta" no sentido de servidor)
+  - Modo offline (PWA com Service Worker + manifest.json — ver plano de
+    adaptação para celular logo abaixo, que já cobre esse ponto)
+  - Notificações: agendar lembretes diários reais com Service Worker
+  - Acessibilidade: modo de alto contraste dedicado e tamanho de fonte
+    ajustável pelo próprio app (hoje já respeita zoom/fonte do sistema,
+    mas não tem um controle interno próprio)
+  - Adaptação e validação real em celular (ver plano detalhado abaixo)
+
+── PLANO: ADAPTAÇÃO PARA CELULAR (mobile) ───
+Planejamento — nenhuma linha de código foi alterada para isto ainda; serve
+como roteiro para quando essa etapa for priorizada. Escopo: rodar o app no
+Chrome de um celular (Android, principalmente) acessando o servidor local
+pela rede Wi-Fi de casa/da mesma rede do PC — sem loja de aplicativo, sem
+empacotar nada nativo.
+
+Etapa 0 — Servir o app para a rede local, não só localhost
+  - Hoje o servidor (.claude/static-server.ps1) só responde em
+    "localhost:5500", ou seja, só o próprio PC enxerga. Precisa passar a
+    escutar em 0.0.0.0 (todas as interfaces de rede), descobrir o IP local
+    do PC na rede Wi-Fi (ipconfig) e liberar a porta 5500 no Firewall do
+    Windows para dispositivos da mesma rede.
+  - Resultado esperado: abrir "http://<IP-do-PC>:5500" no Chrome do
+    celular, com o PC e o celular na mesma rede Wi-Fi.
+
+Etapa 1 — Resolver o bloqueio de microfone em contexto "inseguro"
+  - Maior risco técnico do plano: navegadores modernos (Chrome incluído)
+    só liberam getUserMedia (microfone) em "contextos seguros" — HTTPS ou
+    "localhost". Acessar por IP local em HTTP (http://192.168.x.x) conta
+    como inseguro e o Chrome do celular pode negar o microfone
+    silenciosamente, quebrando toda a função central do app.
+  - Opções a avaliar (nenhuma aplicada ainda):
+    1) Gerar certificado local confiável (ferramenta tipo mkcert) e servir
+       com HTTPS a partir do mesmo servidor PowerShell;
+    2) Usar um túnel HTTPS temporário (ex.: ngrok/localtunnel) apontando
+       para o servidor local, só durante os testes;
+    3) Para testes rápidos e pontuais, habilitar a flag interna do Chrome
+       "Insecure origins treated as secure" no celular, apontando para o
+       IP do PC (não é solução de apresentação, só de teste isolado).
+  - Decidir essa opção ANTES de validar qualquer outra etapa, porque sem
+    microfone funcionando não há o que testar de verdade no treino.
+
+Etapa 2 — Auditoria de responsividade em aparelho físico real
+  - Testar em pelo menos um Android real (não só emulador/DevTools):
+    orientação retrato e paisagem, teclado virtual abrindo por cima de
+    campos de formulário, área "seguros" de notch/barra de gestos.
+  - Revisar uso de unidades de viewport: preferir "100dvh" a "100vh" onde
+    a altura da tela precisa acompanhar a barra de endereço do Chrome
+    mobile (que aparece/some ao rolar).
+  - Conferir se campos de formulário têm fonte de pelo menos 16px — campos
+    menores disparam zoom automático ao focar em iOS Safari (relevante se
+    o teste for estendido para iPhone).
+
+Etapa 3 — Toque e gestos
+  - Reconferir tamanho de área de toque dos botões pequenos (ícones de
+    editar/excluir/mover, fechar painel) em tela real, não só na régua do
+    DevTools.
+  - Validar o arrastar-e-soltar da reordenação de fases (Pointer Events)
+    em toque real — checar se o gesto de arrastar não entra em conflito
+    com o gesto de rolar a lista.
+  - Remover qualquer dependência de estado ":hover" para informação
+    importante (tooltips, dicas visuais) — toque não tem estado de hover.
+
+Etapa 4 — Desempenho em hardware mais modesto
+  - Perfilar CPU/memória num celular de entreada/médio (não só no PC de
+    desenvolvimento): observar o custo de animações (confete, entrada da
+    trilha) e do blur usado nos overlays.
+  - Avaliar o peso acumulado de fotos/áudios em base64 no localStorage num
+    cenário com vários pacientes, já com a compressão de foto e limite de
+    áudio implantados nesta rodada.
+
+Etapa 5 — PWA (opcional, mas evolução natural)
+  - manifest.json (nome, ícones, cor de tema) para permitir "Adicionar à
+    tela inicial" no Android.
+  - Service Worker básico para cache dos 3 arquivos estáticos, permitindo
+    abrir o app mesmo sem rede (não resolve dados/sincronização, só a
+    aplicação em si carregar offline).
+
+Etapa 6 — Acessibilidade mobile
+  - Testar navegação com leitor de tela mobile (TalkBack no Android),
+    já que o trabalho desta rodada de teclado/foco no desktop dá uma boa
+    base, mas o comportamento de toque + leitor de tela é diferente do
+    teclado físico e precisa de validação própria.
+  - Confirmar que o app respeita o tamanho de fonte do sistema operacional
+    quando ajustado nas configurações de acessibilidade do celular.
+
+Etapa 7 — Matriz de testes cruzados antes de considerar "pronto"
+  - Dispositivos mínimos sugeridos: 1 Android (Chrome), 1 tablet (retrato
+    e paisagem); iOS/Safari como extensão opcional, já que traz
+    particularidades próprias (contexto seguro, zoom em input, barras de
+    interface).
+  - Fluxos críticos a revalidar em cada aparelho: login/cadastro, permissão
+    de microfone (Etapa 1), treino completo de uma fase do início ao fim,
+    Painel do Médico (criar/editar/excluir/reordenar), troca de conta.
+
+── HISTÓRICO DE ATUALIZAÇÕES ────────────────
+(mantido a cada rodada de mudanças de código — ver instrução permanente)
+
+Rodada 1 — 2026-08-01
+  - Foto de perfil refletida no ícone de perfil
+  - Grupos reorganizados: Grupo 6 "B e C", Grupo 7 "G e J" (65 fonemas)
+  - Correção de contraste do tema escuro (pílula "Grupo N")
+  - Animações adicionais na tela inicial e nas transições entre exercícios
+  - Botão de áudio por fonema (voz sintética) + fonema encolhido no eixo X
+  - Botão de gênero de voz (rosa/azul)
+  - Tutorial guiado (spotlight) + Central de Ajuda
+  - Sistema de login completo (paciente/fonoaudiólogo) com telefone
+    validado no formato inicial XX-XXXXX-XXXX
+
+Rodada 2 — 2026-08-01
+  - Tema escuro disponível e persistente em todas as telas, do login à
+    última tela
+  - Trilha de progresso (árvore de fases, baixo para cima, nós clicáveis)
+  - Treino passou a ser por fase (um grupo por vez)
+  - Conta de administrador/fonoaudiólogo: adiciona fases e exercícios,
+    acompanha pacientes vinculados
+  - Cadastro de paciente por número + verificação, convite com
+    confirmação/recusa
+  - Painel do médico com lista de pacientes e gráficos (progresso por
+    fase, acertos/erros, erros recorrentes)
+
+Rodada 3 — 2026-08-01
+  - Botão de mostrar/ocultar senha; senha mínima de 5 caracteres
+  - Validação do registro profissional (até 6 dígitos)
+  - "Trocar de conta" destaca a conta atual
+  - Botões totalmente clicáveis em toda a extensão (reforço de área de
+    clique)
+  - Enquadramento responsivo revisado
+  - Tutorial não ultrapassa nem encosta nas bordas da tela
+  - Fluxo de "sair da fase" e demais ajustes de navegação
+
+Rodada 4 — 2026-08-01
+  - Correção definitiva do cadastro de paciente no Painel do Médico:
+    causa raiz identificada (número de paciente formatado como telefone
+    causava confusão/erro de digitação)
+  - ID de conta aleatório de 4 dígitos para toda conta (paciente e
+    médico), único, sem padrão — substitui o vínculo por telefone
+  - Telefone padronizado para (XX)X XXXX-XXXX em todo o app
+  - Exercícios do médico passaram a ser adicionados individualmente por
+    paciente (antes eram globais)
+  - Cada fase exibe e conta apenas seus próprios fonemas (progresso
+    isolado por fase)
+  - Corrigido bug em que iniciar uma nova fase podia mostrar a tela de
+    "fase concluída" indevidamente
+  - Selo amarelo de intervenção do médico nos nós da trilha
+  - Botão de tema movido do canto flutuante para os cabeçalhos de cada
+    tela (o botão flutuante podia sobrepor e bloquear cliques em outros
+    botões)
+  - Configurado servidor de preview local (.claude/launch.json +
+    static-server.ps1), já que a máquina não tem Node/Python disponíveis
+
+Rodada 5 — 2026-08-01
+  - Função de remover conta do dispositivo (pela lista de contas ou pelo
+    menu de perfil da conta atual), com limpeza de vínculos relacionados
+  - "Nível do perfil" removido do cadastro; renomeado para "Nível de
+    Aprendizagem", agora somente leitura no perfil e calculado
+    automaticamente pelo aproveitamento nas fases
+  - Botão de copiar o ID da conta, com confirmação visual
+  - Prévia do perfil do paciente + ícone de carta enviada em "Convites
+    enviados" no Painel do Médico
+  - Botões da tela de fase concluída invertidos e renomeados: "Próxima
+    fase" (topo, seta) e "Reiniciar fase" (embaixo, loop)
+  - Botão de fechar dos painéis fixo (visível durante toda a rolagem)
+  - Aviso de perda de progresso ao tentar sair de uma fase em andamento
+  - Barra de pesquisa por nome ou ID no Painel do Médico
+  - Este relatório passou a ser atualizado a cada rodada de mudanças de
+    código, como registro contínuo do projeto
+
+Rodada 6 — 2026-08-01
+  - UI adaptativa completa por orientação (retrato/paisagem) e por
+    tamanho de tela — a tela de treino usa layout de duas colunas em
+    paisagem baixa; contêineres e listas usam mais espaço em telas largas
+  - Barra de busca movida definitivamente para a tela inicial (removida
+    do Painel do Médico, que antes também tinha uma)
+  - Trilha de progresso: linhas conectoras passaram a seguir a posição
+    real de cada nó (zigue-zague), com traço contínuo entre fases
+    concluídas e tracejado rumo às próximas — a antiga linha reta central
+    foi removida
+  - Reconhecimento de voz passou a ser contínuo: não é mais preciso
+    clicar para parar a gravação; o match é avaliado em tempo real e, ao
+    ser detectado, confirma e encerra a gravação automaticamente; margem
+    de 3s de silêncio antes de registrar como incorreto
+  - Reordenação de fases por arrastar-e-soltar no Editor de Exercícios do
+    médico (mouse e toque), com progresso do paciente preservado por ID
+    do grupo mesmo após reordenar — refatoração de todo o modelo de dados
+    de progresso/exercícios de índice posicional para ID estável
+  - Corrigido bug real: o campo "Recado pessoal" do perfil não era
+    limpo/preenchido ao trocar de conta, podendo ser salvo por engano na
+    conta errada; agora todos os campos do perfil são explicitamente
+    recarregados a cada login/troca de conta
+  - Sistema de amigos entre pacientes: pedido por nome ou ID (busca da
+    tela inicial), aba "Amigos" com pedidos recebidos/enviados (prévia de
+    perfil básico + ícone de carta) e lista de amigos confirmados
+  - Painel de ranking ("leaderboard") com ícone de pódio, comparando o
+    paciente com seus amigos por fases concluídas e % de acerto
+  - Isolamento de exercícios por paciente reafirmado e validado após a
+    refatoração do modelo de dados (adicionar exercício a um paciente
+    nunca aparece por padrão em outro)
+  - Banco de 15 frases motivacionais na tela inicial, sorteada a cada
+    retorno à tela
+
+Rodada 7 — 2026-08-01
+  - Corrigido bug real de sobreposição: a animação de entrada do topo da
+    tela inicial deixava um transform residual que criava um novo
+    contexto de empilhamento e prendia os menus suspensos (dropdowns)
+    dentro dele — elementos seguintes (como a barra de busca) desenhavam
+    por cima e bloqueavam o clique, dando a impressão de que só as bordas
+    do botão respondiam. Essa é a causa raiz mais provável também da
+    reclamação de cliques que só funcionavam nas bordas dos botões de
+    configurações
+  - Isolamento de exercícios por paciente reverificado a fundo (dado
+    salvo, sessão ativa e lista de treino) e confirmado correto em todos
+    os cenários testados; adicionado cache-busting (?v=) em script.js e
+    style.css para evitar que o navegador sirva versões antigas em cache
+  - Barra de busca reposicionada logo abaixo dos ícones (removido o
+    "justify-content: space-between" que espalhava os itens do topo pela
+    tela toda) e ícones do menu inicial redistribuídos igualmente no
+    lugar de ficarem agrupados de um lado só
+  - Busca soma automaticamente ao concluir (resultado escolhido) ou ao
+    abrir qualquer outro menu/painel/tela; mensagem de "nenhum resultado
+    encontrado" quando a busca por nome/ID não encontra ninguém
+  - Animação de entrada da trilha de progresso (de cima para baixo,
+    passando por cada fase) ao iniciar a tarefa diária pela tela inicial
+  - Banco de 6 mensagens de conclusão de fase, sorteada a cada fase
+    concluída, substituindo o texto fixo anterior
+  - Reconhecimento de voz remodelado: a janela de duração aceita como
+    válida agora é proporcional ao tamanho do fonema/palavra esperado, em
+    vez de aceitar qualquer som acima de ~350ms — sons muito curtos ou
+    muito mais longos do que o esperado passam a ser registrados como
+    incorretos
+  - Confirmado que exercícios personalizados recebem o mesmo selo de
+    conclusão (check) que as demais fases, em fase mista (base + item
+    personalizado) e em fase 100% personalizada
+  - Fase final da trilha: botão passa a mostrar "Concluir trilha" (em vez
+    de "Próxima fase", que não fazia sentido ali) mantendo a mensagem de
+    "Parabéns!" pela conclusão de toda a trilha
+  - Migração automática de ID de conta: contas criadas antes desse
+    recurso existir (ex.: perfis de médico antigos) recebem um ID único
+    de 4 dígitos no primeiro carregamento após a atualização
+  - Registro profissional (CRFa/CRM) passou a aceitar somente dígitos,
+    limitado a 6, com a mesma máscara do ID da conta; removida a
+    descrição "— máx. 6 dígitos" do rótulo do campo
+  - Removido o item "Remover conta deste dispositivo" do menu de perfil
+    (redundante — a remoção já é feita pelo ícone de lixeira em "Trocar
+    de conta")
+
+Rodada 8 — 2026-08-01
+  - "Fonoaudiólogo responsável" passou a ser preenchido automaticamente
+    (e sempre sobrescrito) com o nome do médico assim que o paciente
+    aceita o convite, mesmo que já houvesse um valor digitado antes
+  - Barra de progresso da fase colorida por resultado: verde (acerto),
+    vermelho (erro), cinza (pulado) — persistente durante toda a fase
+  - Fase personalizada (adicionada pelo médico) ainda não concluída:
+    ícone azul + caminho tracejado nos dois lados (antes e depois),
+    revertendo para o normal (dourado, check, traço contínuo) assim que
+    é concluída
+  - Painel do Médico: lista de pacientes em grade de duas colunas
+    alinhadas e centralizadas; número ímpar de pacientes centraliza o
+    último abaixo das duas colunas, sem esticar o card
+  - Listas de amigos e de pacientes reorganizadas em ordem alfabética
+  - Corrigido o comportamento do ícone de mostrar/ocultar senha: por
+    padrão nasce no estado "oculto" (olho fechado/riscado) e só passa a
+    indicar "visível" (olho aberto) depois de clicado — antes a lógica
+    estava invertida (olho aberto era o estado padrão, com a senha na
+    verdade oculta)
+  - Bolinha vermelha no canto superior direito do ícone "Amigos" quando
+    há pedido de amizade pendente de aprovação, some automaticamente ao
+    não haver mais pendências
+  - Mensagem curta de confirmação ("Você e Fulano agora são amigos!") ao
+    aceitar um pedido de amizade
+  - Corrigido bug real de desalinhamento entre os ícones da trilha de
+    progresso e as linhas conectoras: as linhas eram calculadas por
+    getBoundingClientRect() logo após inserir os nós no DOM, num momento
+    em que a animação de entrada (fill-mode:both) ainda mantinha um
+    transform de deslocamento aplicado — a linha ficava presa nessa
+    posição deslocada para sempre, mesmo depois do nó já ter se
+    assentado na posição final. Corrigido usando offsetLeft/offsetTop
+    (que ignoram transform de CSS) para calcular o centro de cada nó
+
+Rodada 9 — 2026-08-01
+  - Corrigido bug real: o último exercício de uma fase sempre aparecia
+    verde na barra de progresso, mesmo quando pulado ou errado — a causa
+    era um trecho em finishPhase() que forçava a largura de todos os
+    segmentos para 100% ao concluir a fase, sem aplicar a classe de
+    status certa para o último (que nunca passa por updateProgress() de
+    novo depois de respondido, diferente dos anteriores). Agora todos os
+    segmentos da fase são pintados conforme o status real registrado
+  - Tela de finalização de fase passou a variar conforme o aproveitamento
+    (acertos ÷ total, arredondado para baixo): abaixo de 60%, sorteia uma
+    mensagem de um banco de 6 frases de incentivo para tentar de novo (em
+    vez do banco de frases de conquista) e não exibe a medalha nem o
+    confete
+  - Botão "Desafio anterior" fica desativado (opacidade reduzida, tom
+    mais escuro/translúcido) no primeiro exercício de cada fase
+  - Adicionada opção de remover amigo na aba "Amigos" (ícone de lixeira
+    em cada card, com modal de confirmação antes de remover), desfazendo
+    o vínculo dos dois lados
+  - Sair da conta deixou de levar direto para a tela de login: agora,
+    se houver qualquer conta salva neste dispositivo, abre uma tela de
+    seleção de conta com o nome de cada uma; ao escolher uma conta, pede
+    a senha específica daquela conta antes de entrar (a tela de
+    login/cadastro tradicional só aparece se não houver nenhuma conta
+    salva, ou pelo link "Entrar com outro e-mail")
+  - "Recado pessoal" reposicionado para logo abaixo do selo de tipo de
+    conta ("Paciente"/"Fonoaudiólogo(a)") no painel de perfil
+  - Corrigido bug real: cards de perfil (aba de amigos e lista de
+    pacientes do Painel do Médico) tinham altura inconsistente entre si,
+    porque o texto de estatísticas (ex.: "0/7 fases") podia ocupar uma ou
+    duas linhas dependendo do conteúdo, encolhendo o card quando o texto
+    era mais curto — corrigido reservando sempre o espaço de 2 linhas
+    para esse texto, deixando todos os cards com o mesmo tamanho
+  - Corrigido bug real: uma fase já concluída ficava desabilitada
+    (clique parava de funcionar, apesar do check continuar visível)
+    sempre que uma fase personalizada nova e ainda pendente era inserida
+    pelo médico bem antes dela na trilha — a causa era o cálculo de
+    "desbloqueada" depender só da fase anterior na ordem, sem considerar
+    que uma fase já concluída deveria continuar sempre acessível. Agora
+    fases novas do médico aparecem corretamente na posição definida por
+    ele (inclusive entre duas fases já concluídas), seguindo o mesmo
+    padrão visual das demais, sem travar as fases vizinhas já concluídas
+
+Rodada 10 — 2026-08-04
+  - Reconhecimento de fala real integrado (Web Speech API /
+    SpeechRecognition, pt-BR): passa a ser o critério principal de
+    acerto/erro durante a gravação, comparando o texto reconhecido com o
+    fonema/palavra esperado (normalizado — minúsculas, sem acento, sem
+    pontuação); confirma acerto assim que um resultado parcial ou final
+    bate, e erro assim que um resultado final não bate, sem esperar o
+    tempo máximo de gravação
+  - Reinício automático da escuta se o serviço de reconhecimento do
+    navegador encerrar sozinho por conta própria em modo contínuo (comum
+    em utterances curtas como sílabas isoladas), enquanto a gravação e a
+    fase ainda estiverem em aberto e sem veredito
+  - Fallback automático e por gravação: se o navegador não suportar
+    SpeechRecognition (ex.: Firefox) ou a permissão do serviço falhar ao
+    iniciar, cai de volta no heurístico por volume + duração (mantido
+    intacto) só para aquela tentativa específica — nunca trava o treino
+  - Falha permanente de permissão do serviço (ex.: usuário nega o
+    reconhecimento) desativa novas tentativas de reconhecimento real pelo
+    resto da sessão, evitando prompts repetidos; volta a usar só o
+    heurístico de volume/duração dali em diante
+  - Cache-busting de script.js/style.css atualizado para v=13
+
+Rodada 11 — 2026-08-04
+  - Reconhecimento de voz otimizado: getUserMedia passa a pedir
+    echoCancellation/noiseSuppression/autoGainControl; sinal do microfone
+    amplificado por um GainNode (2,2x) antes da análise; suavização do
+    analisador de volume reduzida para reação mais rápida; indicador
+    visual "Captando sua voz…" em tempo real quando o volume cruza o
+    limiar de reconhecimento
+  - Confirmação automática do heurístico de reserva deixou de esperar um
+    tempo fixo proporcional ao tamanho da palavra — agora reage ao FIM da
+    fala (silêncio breve após falar), reduzindo a espera percebida depois
+    que o paciente termina de falar um fonema curto; pausa entre resposta
+    e próximo desafio reduzida de 550ms para 380ms
+  - Permissão de microfone passou a ser perguntada uma única vez, na
+    primeira entrada no app (não mais em toda fase) — usa a Permissions
+    API para checar em silêncio, em sessões seguintes, se a permissão já
+    foi concedida ou negada antes, sem reabrir a tela de pedido
+  - Corrigido bug real crítico: sem microfone concedido, todo exercício
+    era marcado como acerto automaticamente ao clicar em "Gravar Voz", sem
+    nenhuma verificação — bastava negar/pular a permissão para "concluir"
+    qualquer fase inteira sem falar nada. Agora, sem microfone, o botão de
+    gravar fica bloqueado (com aviso e botão para ativar o microfone a
+    qualquer momento), mas a navegação pelo resto do app continua livre
+  - Corrigido bug real: o placar final somava respostas certas E erradas
+    juntas sob o rótulo "Concluídos", divergindo do cálculo real usado
+    para decidir a mensagem/medalha da fase (podia mostrar "4 Concluídos
+    de 5", como se fosse quase perfeito, ao mesmo tempo em que exibia a
+    mensagem de baixo desempenho). Placar reescrito para mostrar
+    separadamente Propostas/Acertadas/Erradas/Puladas, com contagem real,
+    mais uma frase-resumo em linguagem simples
+  - Otimização de armazenamento: foto de perfil redimensionada e
+    recomprimida em JPEG antes de salvar; áudio de exercício limitado a
+    3MB; toda gravação no localStorage trata erro de cota esgotada com
+    aviso ao usuário em vez de falhar em silêncio; maioria das gravações
+    passou a mesclar só as contas alteradas com a versão mais recente do
+    localStorage (em vez de sobrescrever o banco inteiro com uma cópia
+    que pode estar desatualizada), e abas se atualizam sozinhas quando
+    outra aba salva alguma mudança
+  - Médico passou a poder editar e excluir grupos (fases) e exercícios
+    personalizados já criados, além de criar e reordenar (antes só dava
+    para adicionar e reordenar); reordenação ganhou também botões de seta
+    para cima/baixo, além do arrastar-e-soltar
+  - Navegação 100% por teclado: cartões que só respondiam a clique
+    (trocar de conta, seleção de conta após sair, resultado de busca,
+    lista de pacientes do médico) agora são alcançáveis por Tab e
+    ativáveis por Enter/Espaço; abrir um painel/modal move o foco para
+    dentro dele e fechar devolve o foco a quem abriu (com suporte a
+    painéis abertos um dentro do outro); Tab/Shift+Tab ficam presos no
+    overlay aberto; Esc fecha o overlay mais recente; campos sem rótulo
+    visível ganharam aria-label; mensagens de erro/sucesso ganharam
+    aria-live
+  - Planejamento (documentação, sem código) para adaptação da ferramenta
+    ao celular via Chrome local, cobrindo desde servir na rede local e o
+    bloqueio de microfone em contexto inseguro até PWA e uma matriz de
+    testes cruzados — ver seção dedicada acima
+  - Cache-busting de script.js/style.css atualizado para v=15
+=============================================

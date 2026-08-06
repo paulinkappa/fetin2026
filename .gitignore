@@ -1,0 +1,6 @@
+# Configuração local do Claude Code (pessoal, não do projeto)
+.claude/settings.local.json
+
+# Lixo comum de SO
+Thumbs.db
+.DS_Store

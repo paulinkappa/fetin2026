@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VozAtiva</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;900&family=Baloo+2:wght@700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=16" />
+</head>
+<body>
+  <script>
+    (function () {
+      try { if (localStorage.getItem('vozativa_theme') === 'dark') document.body.classList.add('dark-mode'); }
+      catch (e) {}
+    })();
+  </script>
+
+  <div class="bg-blobs">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <!-- ════ MODAL: SAIR DO APP ════ -->
+  <div class="modal-overlay hidden" id="exit-modal">
+    <div class="modal-card">
+      <p class="modal-question">Tem certeza que deseja sair?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="cancelExit()">Cancelar</button>
+        <button class="btn modal-btn-confirm" onclick="confirmExit()">Sair</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: SAIR DA CONTA ════ -->
+  <div class="modal-overlay hidden" id="logout-modal">
+    <div class="modal-card">
+      <p class="modal-question">Deseja sair desta conta?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('logout-modal')">Cancelar</button>
+        <button class="btn modal-btn-confirm" onclick="confirmLogout()">Sair da conta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: REMOVER CONTA DO DISPOSITIVO ════ -->
+  <div class="modal-overlay hidden" id="remove-account-modal">
+    <div class="modal-card">
+      <p class="modal-question" id="remove-account-question">Remover esta conta deste dispositivo? Os dados salvos localmente serão apagados.</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('remove-account-modal')">Cancelar</button>
+        <button class="btn modal-btn-confirm" onclick="executeRemoveAccount()">Remover</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: REMOVER AMIGO ════ -->
+  <div class="modal-overlay hidden" id="remove-friend-modal">
+    <div class="modal-card">
+      <p class="modal-question" id="remove-friend-question">Remover este amigo da sua lista?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('remove-friend-modal')">Cancelar</button>
+        <button class="btn modal-btn-confirm" onclick="executeRemoveFriend()">Remover</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: EXCLUIR FASE PERSONALIZADA ════ -->
+  <div class="modal-overlay hidden" id="delete-group-modal">
+    <div class="modal-card">
+      <p class="modal-question" id="delete-group-question">Excluir esta fase?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('delete-group-modal')">Cancelar</button>
+        <button class="btn modal-btn-confirm" onclick="executeDeleteGroup()">Excluir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: EXCLUIR EXERCÍCIO PERSONALIZADO ════ -->
+  <div class="modal-overlay hidden" id="delete-exercise-modal">
+    <div class="modal-card">
+      <p class="modal-question" id="delete-exercise-question">Excluir este exercício?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('delete-exercise-modal')">Cancelar</button>
+        <button class="btn modal-btn-confirm" onclick="executeDeleteExercise()">Excluir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: SAIR DA FASE (progresso será perdido) ════ -->
+  <div class="modal-overlay hidden" id="leave-phase-modal">
+    <div class="modal-card">
+      <p class="modal-question">Se você sair agora, o progresso desta fase será perdido. Deseja realmente sair?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('leave-phase-modal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          Permanecer
+        </button>
+        <button class="btn modal-btn-confirm" onclick="confirmLeavePhase()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Sair
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ PERMISSÃO DE MICROFONE (perguntada uma única vez, ao entrar) ════ -->
+  <div class="perm-overlay hidden" id="perm-overlay" role="dialog" aria-modal="true" aria-labelledby="perm-title">
+    <div class="perm-card">
+      <div class="perm-mic-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/>
+          <line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/>
+        </svg>
+      </div>
+      <h2 class="perm-title" id="perm-title">Permissão de microfone</h2>
+      <p class="perm-desc">Para treinar os fonemas com sua voz, precisamos acessar o microfone. Isso é perguntado apenas uma vez — se você preferir, pode ativar depois em qualquer exercício.</p>
+      <button class="btn btn-primary perm-btn" onclick="requestMicPermission()"><span class="btn-label">Permitir microfone</span></button>
+      <button class="btn btn-ghost perm-skip" onclick="skipPermission()">Continuar sem microfone</button>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: EDITAR PERFIL ════ -->
+  <div class="panel-overlay hidden" id="profile-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Meu Perfil</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('profile-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="profile-avatar-wrap">
+        <div class="profile-avatar" id="profile-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+          </svg>
+        </div>
+        <button class="avatar-edit-btn" onclick="document.getElementById('avatar-input').click()">Trocar foto</button>
+        <input type="file" id="avatar-input" accept="image/*" style="display:none" onchange="handleAvatarChange(event)"/>
+        <span class="role-badge" id="pf-role-badge">Paciente</span>
+      </div>
+      <div class="profile-fields">
+        <label class="field-label">Recado pessoal
+          <textarea class="field-input field-textarea" id="pf-bio" placeholder="Escreva algo sobre você..."></textarea>
+        </label>
+        <label class="field-label">Nome
+          <input class="field-input" id="pf-name" type="text" placeholder="Seu nome completo" value="Usuário VozAtiva"/>
+        </label>
+        <label class="field-label">E-mail
+          <input class="field-input" id="pf-email" type="email" placeholder="seu@email.com" value="usuario@vozativa.app" readonly/>
+        </label>
+        <label class="field-label">Telefone
+          <input class="field-input" id="pf-phone" type="tel" placeholder="(XX)X XXXX-XXXX" maxlength="15" value="" oninput="formatPhoneInput(event)"/>
+        </label>
+        <p class="field-error hidden" aria-live="polite" id="pf-phone-error">Telefone inválido. Use o formato (XX)X XXXX-XXXX.</p>
+        <label class="field-label">ID da conta
+          <div class="copy-field">
+            <input class="field-input" id="pf-account-id" type="text" readonly/>
+            <button type="button" class="field-copy-btn" onclick="copyAccountId()" aria-label="Copiar ID da conta" title="Copiar ID">
+              <svg class="copy-icon copy-icon-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <svg class="copy-icon copy-icon-done hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+          </div>
+        </label>
+
+        <div id="pf-patient-fields">
+          <label class="field-label">Fonoaudiólogo responsável
+            <input class="field-input" id="pf-doctor" type="text" placeholder="Nome do profissional (opcional)" value=""/>
+          </label>
+          <label class="field-label">Nível de Aprendizagem
+            <input class="field-input" id="pf-level" type="text" readonly/>
+          </label>
+        </div>
+
+        <div id="pf-doctor-fields" class="hidden">
+          <label class="field-label">Registro profissional (CRFa/CRM)
+            <input class="field-input" id="pf-crm" type="text" inputmode="numeric" placeholder="000000" maxlength="6" value="" oninput="formatCrmInput(event)"/>
+          </label>
+          <p class="field-error hidden" aria-live="polite" id="pf-crm-error">Registro profissional deve ter no máximo 6 dígitos.</p>
+        </div>
+      </div>
+      <button class="btn btn-primary panel-save" onclick="saveProfile()">Salvar alterações</button>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: TROCAR DE CONTA ════ -->
+  <div class="panel-overlay hidden" id="accounts-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Trocar de conta</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('accounts-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="accounts-list-view">
+        <div class="accounts-list" id="accounts-list">
+          <!-- Gerado via JS -->
+        </div>
+        <button class="btn btn-ghost accounts-add" onclick="addAccount()">+ Adicionar conta</button>
+      </div>
+
+      <form class="auth-form hidden" id="accounts-password-view" onsubmit="handleAccountsSwitchLogin(event)">
+        <button type="button" class="icon-btn account-picker-back-btn" onclick="showAccountsList()" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="account-picker-selected">
+          <div class="account-avatar" id="accounts-switch-avatar"></div>
+          <span class="account-name" id="accounts-switch-name"></span>
+        </div>
+        <label class="field-label">Senha
+          <div class="password-field">
+            <input class="field-input" id="accounts-switch-password" type="password" placeholder="Sua senha" minlength="5" required/>
+            <button type="button" class="password-toggle" tabindex="-1" onclick="togglePasswordVisibility('accounts-switch-password', this)" aria-label="Mostrar senha">
+              <svg class="eye-icon eye-on hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-icon eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.7 21.7 0 0 1-2.61 3.87"/><path d="M9.53 9.53a3 3 0 0 0 4.24 4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            </button>
+          </div>
+        </label>
+        <p class="field-error hidden" aria-live="polite" id="accounts-switch-error"></p>
+        <button class="btn btn-primary auth-submit" type="submit">Entrar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: AJUDA ════ -->
+  <div class="panel-overlay hidden" id="help-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Central de Ajuda</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('help-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="help-list">
+        <details class="help-item" open>
+          <summary>🔊 Como ouço a pronúncia do fonema?</summary>
+          <p>Toque no botão redondo com o ícone de som, ao lado do fonema. Ele fica destacado enquanto o áudio está tocando.</p>
+        </details>
+        <details class="help-item">
+          <summary>🚻 Como troco a voz que pronuncia os fonemas?</summary>
+          <p>Use o botão rosa/azul no topo da tela de treino para alternar entre voz feminina e masculina.</p>
+        </details>
+        <details class="help-item">
+          <summary>🎙️ Como funciona a gravação da minha voz?</summary>
+          <p>Toque em "Gravar Voz", fale o fonema exibido e toque novamente para parar. Sua voz aparece no visualizador de ondas.</p>
+        </details>
+        <details class="help-item">
+          <summary>🌗 Como ativo o tema escuro?</summary>
+          <p>Toque no botão circular no canto da tela (ícone de sol/lua) — ele funciona em qualquer tela do app, inclusive antes de entrar na conta.</p>
+        </details>
+        <details class="help-item">
+          <summary>🌳 Como funciona a trilha de fases?</summary>
+          <p>Cada nó da árvore representa um grupo de fonemas. Complete uma fase para desbloquear a próxima, sempre subindo na trilha.</p>
+        </details>
+        <details class="help-item">
+          <summary>👤 Como edito meu perfil e foto?</summary>
+          <p>Toque no ícone de perfil e escolha "Editar perfil" para trocar nome, foto, telefone e mais.</p>
+        </details>
+        <details class="help-item">
+          <summary>🩺 Sou fonoaudiólogo(a), como acompanho meus pacientes?</summary>
+          <p>Use o botão "Pacientes" no topo da tela inicial para adicionar pacientes pelo ID e acompanhar gráficos de rendimento.</p>
+        </details>
+        <details class="help-item">
+          <summary>🎙️ Preciso clicar para parar a gravação?</summary>
+          <p>Não! Basta gravar — o reconhecimento é contínuo e a fase avança sozinha assim que sua fala é identificada. Se ficar em silêncio por 3 segundos, uma nova tentativa é iniciada automaticamente.</p>
+        </details>
+        <details class="help-item">
+          <summary>🧑‍🤝‍🧑 Como adiciono amigos e vejo o ranking?</summary>
+          <p>Use a busca da tela inicial para encontrar outro paciente por nome ou ID e enviar um pedido de amizade. Acompanhe pedidos e amigos na aba "Amigos", e veja o ranking de desempenho no botão "Ver ranking".</p>
+        </details>
+      </div>
+      <button class="btn btn-ghost help-replay-btn" onclick="replayTour()">Rever tutorial guiado</button>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: AMIGOS ════ -->
+  <div class="panel-overlay hidden" id="friends-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Amigos</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('friends-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div id="friend-requests-received-section" class="hidden">
+        <h3 class="admin-subtitle">Pedidos recebidos</h3>
+        <div class="friends-list" id="friend-requests-received-list"></div>
+      </div>
+
+      <div id="friend-requests-sent-section" class="hidden">
+        <h3 class="admin-subtitle">Pedidos enviados</h3>
+        <div class="friends-list" id="friend-requests-sent-list"></div>
+      </div>
+
+      <h3 class="admin-subtitle">Meus amigos</h3>
+      <div class="friends-list" id="friends-list"></div>
+
+      <button class="btn btn-primary leaderboard-open-btn" onclick="openLeaderboardPanel()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H3v-7h6z"/><path d="M15 21h6v-11h-6z"/><path d="M9 21v-15h6v15"/></svg>
+        Ver ranking
+      </button>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: LEADERBOARD ════ -->
+  <div class="panel-overlay hidden" id="leaderboard-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Ranking de desempenho</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('leaderboard-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="leaderboard-podium-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H3v-7h6z"/><path d="M15 21h6v-11h-6z"/><path d="M9 21v-15h6v15"/></svg>
+      </div>
+      <div class="leaderboard-list" id="leaderboard-list"></div>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: EDITOR DE FASES E EXERCÍCIOS (admin) ════ -->
+  <div class="panel-overlay hidden" id="admin-editor-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Editor de Exercícios</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('admin-editor-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="admin-editor-patient-name" id="admin-editor-patient-name"></p>
+
+      <h3 class="admin-subtitle">Criar novo grupo (fase)</h3>
+      <div class="admin-row">
+        <input class="field-input" id="admin-group-name" type="text" placeholder="Nome do grupo (ex: R e RR)" aria-label="Nome do novo grupo"/>
+        <button class="btn btn-ghost admin-btn" onclick="createCustomGroup()">Criar</button>
+      </div>
+
+      <h3 class="admin-subtitle">Adicionar sílaba ou palavra</h3>
+      <div class="profile-fields">
+        <label class="field-label">Grupo
+          <select class="field-input" id="admin-ex-group"></select>
+        </label>
+        <label class="field-label">Sílaba ou palavra
+          <input class="field-input" id="admin-ex-text" type="text" placeholder="Ex: TRA"/>
+        </label>
+        <label class="field-label">Instrução de pronúncia
+          <textarea class="field-input field-textarea" id="admin-ex-tip" placeholder="Como o paciente deve posicionar a boca e a língua..."></textarea>
+        </label>
+        <label class="field-label">Áudio do fonema (opcional)
+          <input class="field-input" id="admin-ex-audio" type="file" accept="audio/*"/>
+        </label>
+        <p class="field-error hidden" aria-live="polite" id="admin-ex-error"></p>
+      </div>
+      <div class="admin-form-actions">
+        <button class="btn btn-primary panel-save" id="admin-ex-submit-btn" onclick="addCustomExercise()">Adicionar exercício</button>
+        <button class="btn btn-ghost hidden" id="admin-ex-cancel-btn" onclick="cancelEditExercise()">Cancelar edição</button>
+      </div>
+
+      <h3 class="admin-subtitle">Exercícios personalizados</h3>
+      <div class="admin-custom-list" id="admin-custom-list"></div>
+
+      <h3 class="admin-subtitle">Ordem das fases</h3>
+      <p class="admin-order-hint">Arraste pelo ícone <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><circle cx="9" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>, ou use as setas — fases personalizadas também podem ser renomeadas e excluídas.</p>
+      <div class="admin-group-order-list" id="admin-group-order-list"></div>
+    </div>
+  </div>
+
+  <!-- ════ TOUR GUIADO ════ -->
+  <div class="tour-overlay hidden" id="tour-overlay">
+    <div class="tour-blocker"></div>
+    <div class="tour-spotlight" id="tour-spotlight"></div>
+    <div class="tour-tooltip" id="tour-tooltip">
+      <p class="tour-tooltip-text" id="tour-tooltip-text"></p>
+      <div class="tour-progress-dots" id="tour-progress-dots"></div>
+      <div class="tour-tooltip-actions">
+        <button class="btn btn-ghost tour-skip" onclick="skipTour()">Pular</button>
+        <button class="btn btn-primary tour-next" id="tour-next-btn" onclick="nextTourStep()">Próximo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ TELA DE AUTENTICAÇÃO ════ -->
+  <div class="screen" id="screen-auth">
+    <div class="auth-wrap">
+      <div class="auth-top-row">
+        <button class="icon-btn theme-toggle-btn" onclick="toggleDarkMode()" aria-label="Alternar tema claro/escuro">
+          <span class="theme-toggle-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </span>
+        </button>
+      </div>
+      <div class="auth-logo">
+        <div class="home-logo-mark auth-logo-mark">
+          <div class="logo-wave"><span></span><span></span><span></span><span></span><span></span></div>
+        </div>
+        <h1 class="auth-title">VozAtiva</h1>
+        <p class="auth-tagline">Treine sua fala com clareza e confiança</p>
+      </div>
+
+      <div class="auth-card">
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')" type="button">Entrar</button>
+          <button class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')" type="button">Criar conta</button>
+        </div>
+
+        <form class="auth-form" id="login-form" onsubmit="handleLogin(event)">
+          <label class="field-label">E-mail
+            <input class="field-input" id="login-email" type="email" placeholder="seu@email.com" required/>
+          </label>
+          <label class="field-label">Senha
+            <div class="password-field">
+              <input class="field-input" id="login-password" type="password" placeholder="Sua senha" minlength="5" required/>
+              <button type="button" class="password-toggle" tabindex="-1" onclick="togglePasswordVisibility('login-password', this)" aria-label="Mostrar senha">
+                <svg class="eye-icon eye-on hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="eye-icon eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.7 21.7 0 0 1-2.61 3.87"/><path d="M9.53 9.53a3 3 0 0 0 4.24 4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+            </div>
+          </label>
+          <p class="field-error hidden" aria-live="polite" id="login-error"></p>
+          <button class="btn btn-primary auth-submit" type="submit">Entrar</button>
+        </form>
+
+        <form class="auth-form hidden" id="signup-form" onsubmit="handleSignup(event)">
+          <div class="role-toggle" id="signup-role-toggle">
+            <button type="button" class="role-btn active" id="role-btn-paciente" onclick="setSignupRole('paciente')">🧑 Sou paciente</button>
+            <button type="button" class="role-btn" id="role-btn-medico" onclick="setSignupRole('medico')">🩺 Sou fonoaudiólogo(a)</button>
+          </div>
+          <label class="field-label">Nome completo
+            <input class="field-input" id="signup-name" type="text" placeholder="Seu nome completo" required/>
+          </label>
+          <label class="field-label">E-mail
+            <input class="field-input" id="signup-email" type="email" placeholder="seu@email.com" required/>
+          </label>
+          <label class="field-label">Senha
+            <div class="password-field">
+              <input class="field-input" id="signup-password" type="password" placeholder="Crie uma senha (mín. 5 caracteres)" minlength="5" required/>
+              <button type="button" class="password-toggle" tabindex="-1" onclick="togglePasswordVisibility('signup-password', this)" aria-label="Mostrar senha">
+                <svg class="eye-icon eye-on hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="eye-icon eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.7 21.7 0 0 1-2.61 3.87"/><path d="M9.53 9.53a3 3 0 0 0 4.24 4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+            </div>
+          </label>
+          <label class="field-label">Confirmar senha
+            <div class="password-field">
+              <input class="field-input" id="signup-password2" type="password" placeholder="Repita a senha" minlength="5" required/>
+              <button type="button" class="password-toggle" tabindex="-1" onclick="togglePasswordVisibility('signup-password2', this)" aria-label="Mostrar senha">
+                <svg class="eye-icon eye-on hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="eye-icon eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.7 21.7 0 0 1-2.61 3.87"/><path d="M9.53 9.53a3 3 0 0 0 4.24 4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+            </div>
+          </label>
+          <label class="field-label">Telefone
+            <input class="field-input" id="signup-phone" type="tel" placeholder="(XX)X XXXX-XXXX" maxlength="15" oninput="formatPhoneInput(event)" required/>
+          </label>
+
+          <div id="signup-patient-fields">
+            <label class="field-label">Fonoaudiólogo responsável
+              <input class="field-input" id="signup-doctor" type="text" placeholder="Nome do profissional (opcional)"/>
+            </label>
+          </div>
+
+          <div id="signup-doctor-fields" class="hidden">
+            <label class="field-label">Registro profissional (CRFa/CRM)
+              <input class="field-input" id="signup-crm" type="text" inputmode="numeric" placeholder="000000" maxlength="6" oninput="formatCrmInput(event)"/>
+            </label>
+          </div>
+
+          <p class="field-error hidden" aria-live="polite" id="signup-error"></p>
+          <button class="btn btn-primary auth-submit" type="submit">Criar conta</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ TELA DE SELEÇÃO DE CONTA (após sair, com outras contas salvas) ════ -->
+  <div class="screen hidden" id="screen-account-picker">
+    <div class="auth-wrap">
+      <div class="auth-top-row">
+        <button class="icon-btn theme-toggle-btn" onclick="toggleDarkMode()" aria-label="Alternar tema claro/escuro">
+          <span class="theme-toggle-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </span>
+        </button>
+      </div>
+      <div class="auth-logo">
+        <div class="home-logo-mark auth-logo-mark">
+          <div class="logo-wave"><span></span><span></span><span></span><span></span><span></span></div>
+        </div>
+        <h1 class="auth-title">VozAtiva</h1>
+        <p class="auth-tagline">Escolha uma conta para entrar</p>
+      </div>
+
+      <div class="auth-card">
+        <!-- LISTA DE CONTAS SALVAS -->
+        <div id="account-picker-list-view">
+          <div class="accounts-list" id="account-picker-list"></div>
+          <button type="button" class="btn btn-ghost auth-submit" onclick="goToFreshLogin()">Entrar com outro e-mail</button>
+        </div>
+
+        <!-- SENHA DA CONTA SELECIONADA -->
+        <form class="auth-form hidden" id="account-picker-password-view" onsubmit="handleAccountPickerLogin(event)">
+          <button type="button" class="icon-btn account-picker-back-btn" onclick="showAccountPickerList()" aria-label="Voltar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="account-picker-selected">
+            <div class="account-avatar" id="account-picker-avatar"></div>
+            <span class="account-name" id="account-picker-name"></span>
+          </div>
+          <label class="field-label">Senha
+            <div class="password-field">
+              <input class="field-input" id="account-picker-password" type="password" placeholder="Sua senha" minlength="5" required/>
+              <button type="button" class="password-toggle" tabindex="-1" onclick="togglePasswordVisibility('account-picker-password', this)" aria-label="Mostrar senha">
+                <svg class="eye-icon eye-on hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="eye-icon eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.7 21.7 0 0 1-2.61 3.87"/><path d="M9.53 9.53a3 3 0 0 0 4.24 4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+            </div>
+          </label>
+          <p class="field-error hidden" aria-live="polite" id="account-picker-error"></p>
+          <button class="btn btn-primary auth-submit" type="submit">Entrar</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ TELA INICIAL ════ -->
+  <div class="screen hidden" id="screen-home">
+    <div class="home-wrap">
+
+      <div class="home-top">
+        <!-- PERFIL DROPDOWN -->
+        <div class="dropdown-anchor" id="profile-anchor">
+          <button class="icon-btn" id="profile-btn" onclick="toggleDropdown('profile')" aria-label="Perfil">
+            <span class="profile-btn-inner" id="profile-btn-avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+              </svg>
+            </span>
+          </button>
+          <div class="dropdown-menu hidden" id="dropdown-profile">
+            <!-- 1. Editar perfil -->
+            <button class="dropdown-item" onclick="openPanel('profile-panel')">
+              <span class="dd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
+              <span class="dd-label">Editar perfil</span>
+            </button>
+            <!-- 2. Trocar de conta -->
+            <button class="dropdown-item" onclick="openPanel('accounts-panel')">
+              <span class="dd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+              <span class="dd-label">Trocar de conta</span>
+            </button>
+            <!-- 3. Sair da conta -->
+            <button class="dropdown-item dd-danger" onclick="openModal('logout-modal')">
+              <span class="dd-icon dd-icon-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+              <span class="dd-label">Sair da conta</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- PACIENTES (somente médico) -->
+        <button class="icon-btn hidden" id="patients-btn" onclick="openDoctorScreen()" aria-label="Pacientes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </button>
+
+        <!-- AMIGOS (somente paciente) -->
+        <button class="icon-btn hidden" id="friends-btn" onclick="openFriendsPanel()" aria-label="Amigos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span class="icon-badge-dot hidden" id="friends-badge-dot" aria-hidden="true"></span>
+        </button>
+
+        <!-- CONFIGURAÇÕES DROPDOWN -->
+        <div class="dropdown-anchor dd-right" id="settings-anchor">
+          <button class="icon-btn" id="settings-btn" onclick="toggleDropdown('settings')" aria-label="Configurações">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <div class="dropdown-menu hidden" id="dropdown-settings">
+            <button class="dropdown-item" id="dd-theme" onclick="toggleDarkMode()">
+              <span class="dd-icon theme-toggle-icon" id="theme-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              </span>
+              <span class="dd-label" id="theme-label">Tema escuro</span>
+            </button>
+            <button class="dropdown-item" id="dd-sound" onclick="toggleSound()">
+              <span class="dd-icon" id="sound-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              </span>
+              <span class="dd-label" id="sound-label">Com som</span>
+            </button>
+            <button class="dropdown-item" id="dd-notif" onclick="toggleNotifications()">
+              <span class="dd-icon" id="notif-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              </span>
+              <span class="dd-label" id="notif-label">Notificações ativas</span>
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /home-top -->
+
+      <!-- BUSCA — exibida apenas na tela inicial -->
+      <div class="search-bar-wrap">
+        <svg class="search-bar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="search-bar-input" id="home-search-input" type="text" placeholder="Buscar por nome ou ID..." oninput="renderHomeSearchResults()" aria-label="Buscar por nome ou ID"/>
+      </div>
+      <div class="search-results-wrap hidden" id="home-search-results"></div>
+
+      <!-- CONVITE DE FONOAUDIÓLOGO -->
+      <div class="invite-card hidden" id="invite-card">
+        <div class="invite-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+        </div>
+        <p class="invite-text" id="invite-text"></p>
+        <div class="invite-actions">
+          <button class="btn btn-ghost invite-deny" onclick="respondInvite(false)">Recusar</button>
+          <button class="btn btn-primary invite-accept" onclick="respondInvite(true)">Confirmar</button>
+        </div>
+      </div>
+
+      <div class="home-hero">
+        <div class="home-logo-mark">
+          <div class="logo-wave"><span></span><span></span><span></span><span></span><span></span></div>
+        </div>
+        <p class="home-greeting" id="home-greeting"></p>
+        <h1 class="home-title">VozAtiva</h1>
+        <p class="home-tagline" id="home-tagline">Treine sua fala com clareza e confiança</p>
+      </div>
+
+      <div class="home-actions">
+        <button class="btn btn-primary home-start" id="home-start-btn" onclick="goToPath()">Iniciar tarefa diária</button>
+        <button class="btn btn-ghost home-exit" onclick="exitApp()">Sair</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════ TELA DA TRILHA DE PROGRESSO ════ -->
+  <div class="screen hidden" id="screen-path">
+    <div class="path-wrap">
+      <header class="app-header">
+        <button class="icon-btn back-btn" onclick="goHome()" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="phase-indicator" id="path-progress-indicator">0 de 7 fases</div>
+        <div class="hud-actions">
+          <button class="icon-btn hud-btn theme-toggle-btn" onclick="toggleDarkMode()" aria-label="Alternar tema claro/escuro">
+            <span class="theme-toggle-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </span>
+          </button>
+          <button class="icon-btn hud-btn" id="path-help-btn" onclick="openHelpPanel()" aria-label="Ajuda">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></svg>
+          </button>
+        </div>
+      </header>
+      <h2 class="path-title">Sua trilha de treino</h2>
+      <div class="path-tree" id="path-tree"><!-- gerado via JS --></div>
+    </div>
+  </div>
+
+  <!-- ════ TELA DO APP (treino) ════ -->
+  <div class="screen hidden" id="screen-app">
+    <div class="container">
+
+      <header class="app-header">
+        <button class="icon-btn back-btn" onclick="requestLeavePhase()" aria-label="Voltar à trilha">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="phase-indicator">Fonema <span id="phase-current">1</span> de <span id="phase-total">5</span></div>
+        <div class="hud-actions">
+          <button class="icon-btn hud-btn theme-toggle-btn" onclick="toggleDarkMode()" aria-label="Alternar tema claro/escuro">
+            <span class="theme-toggle-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </span>
+          </button>
+          <button class="icon-btn hud-btn gender-btn voice-female" id="gender-btn" onclick="toggleGenderVoice()" aria-label="Voz feminina selecionada">
+            <span class="gender-symbol" id="gender-symbol">♀</span>
+          </button>
+          <button class="icon-btn hud-btn" id="help-btn" onclick="openHelpPanel()" aria-label="Ajuda">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="group-label-wrapper">
+        <span class="group-label" id="group-label">Grupo 1 — Vogais</span>
+      </div>
+
+      <div class="progress-wrapper" id="progress-wrapper"></div>
+
+      <main class="card" id="main-card">
+        <div id="challenge-view">
+          <p class="instruction">Pronuncie o fonema abaixo</p>
+          <div class="phoneme-box" id="phoneme-box">
+            <span class="phoneme-text" id="phoneme-display">A</span>
+            <button class="phoneme-audio-btn" id="phoneme-audio-btn" onclick="playPhonemeAudio()" aria-label="Ouvir pronúncia do fonema">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+            </button>
+            <div class="success-badge hidden" id="success-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+          </div>
+          <div class="tip-box"><span class="tip-text" id="tip-text"></span></div>
+          <div class="waveform-wrapper">
+            <canvas id="waveform-canvas"></canvas>
+            <div class="waveform-idle" id="waveform-idle">Pressione Gravar para visualizar o áudio</div>
+            <div class="capture-indicator hidden" id="capture-indicator" aria-live="polite">
+              <span class="capture-dot"></span> Captando sua voz…
+            </div>
+          </div>
+          <div class="mic-blocked-notice hidden" id="mic-blocked-notice" aria-live="polite">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+            <span>Sem acesso ao microfone — ative para treinar este exercício com sua voz.</span>
+            <button type="button" class="btn btn-primary mic-blocked-btn" onclick="retryMicPermission()">Ativar microfone</button>
+          </div>
+          <div class="action-row">
+            <button class="btn btn-side" id="btn-prev" onclick="prevChallenge()">Desafio anterior</button>
+            <button class="btn btn-record" id="btn-record" onclick="toggleRecording()"><span class="btn-label">Gravar Voz</span></button>
+            <button class="btn btn-side" onclick="skipChallenge()">Pular esse desafio</button>
+          </div>
+        </div>
+      </main>
+
+      <!-- FINAL SCREEN (fase concluída) -->
+      <div class="final-screen hidden" id="final-screen">
+        <canvas class="final-confetti-canvas" id="final-confetti-canvas"></canvas>
+        <div class="final-inner">
+          <div class="final-medal">
+            <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="40" cy="44" r="28" fill="url(#mg)" stroke="#fbbf24" stroke-width="3"/>
+              <circle cx="40" cy="44" r="21" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="2"/>
+              <text x="40" y="52" text-anchor="middle" font-size="22" font-weight="900" fill="#fff" font-family="sans-serif">1</text>
+              <rect x="34" y="2" width="12" height="22" rx="6" fill="#a78bfa"/>
+              <rect x="30" y="2" width="8" height="16" rx="4" fill="#c4b5fd" transform="rotate(-15 30 2)"/>
+              <rect x="42" y="2" width="8" height="16" rx="4" fill="#c4b5fd" transform="rotate(15 46 2)"/>
+              <defs>
+                <linearGradient id="mg" x1="20" y1="20" x2="60" y2="70" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#f59e0b"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <h2 class="final-title" id="final-title">Fase concluída!</h2>
+          <p class="final-subtitle"><span id="final-subtitle-lead">Você completou a fase</span> <strong id="final-group-name">Vogais</strong>!</p>
+          <div class="final-stats">
+            <div class="stat stat-total"><span class="stat-value" id="stat-total">5</span><span class="stat-label">Propostas</span></div>
+            <div class="stat stat-done"><span class="stat-value" id="stat-correct">0</span><span class="stat-label">Acertadas</span></div>
+            <div class="stat stat-wrong"><span class="stat-value" id="stat-wrong">0</span><span class="stat-label">Erradas</span></div>
+            <div class="stat stat-skip"><span class="stat-value" id="stat-skipped">0</span><span class="stat-label">Puladas</span></div>
+          </div>
+          <p class="final-stats-summary" id="final-stats-summary"></p>
+          <p class="final-message" id="final-message">Continue praticando todos os dias.<br>Sua voz fica mais forte a cada treino!</p>
+          <button class="btn btn-restart final-next-btn" onclick="backToPath()">
+            <span id="final-next-label">Próxima fase</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+          <button class="btn btn-ghost final-home-btn final-restart-btn" onclick="restartPhase()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Reiniciar fase
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════ TELA DO MÉDICO (pacientes) ════ -->
+  <div class="screen hidden" id="screen-doctor">
+    <div class="doctor-wrap">
+      <header class="app-header">
+        <button class="icon-btn back-btn" onclick="goHome()" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="phase-indicator">Painel do Médico</div>
+        <div class="hud-actions">
+          <button class="icon-btn hud-btn theme-toggle-btn" onclick="toggleDarkMode()" aria-label="Alternar tema claro/escuro">
+            <span class="theme-toggle-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </span>
+          </button>
+        </div>
+      </header>
+
+      <div id="doctor-list-view">
+        <h2 class="doctor-section-title">Meus pacientes</h2>
+        <div class="patients-list" id="patients-list"></div>
+
+        <div id="pending-invites-section" class="hidden">
+          <h2 class="doctor-section-title">Convites enviados</h2>
+          <div class="patients-list" id="pending-invites-list"></div>
+        </div>
+
+        <h2 class="doctor-section-title">Adicionar novo paciente</h2>
+        <div class="patients-add-row">
+          <input class="field-input" id="add-patient-id" type="text" inputmode="numeric" placeholder="ID da conta (4 dígitos)" maxlength="4" oninput="formatAccountIdInput(event)" aria-label="ID da conta do paciente"/>
+          <button class="btn btn-primary add-patient-btn" onclick="addPatientByDoctor()">Adicionar</button>
+        </div>
+        <p class="field-error hidden" aria-live="polite" id="add-patient-error"></p>
+        <p class="field-success hidden" aria-live="polite" id="add-patient-success"></p>
+      </div>
+
+      <div id="doctor-detail-view" class="hidden">
+        <button class="btn btn-ghost detail-back-btn" onclick="showDoctorList()">← Todos os pacientes</button>
+        <div class="patient-detail-header">
+          <div class="patient-detail-avatar" id="detail-avatar"></div>
+          <div>
+            <h2 class="patient-detail-name" id="detail-name"></h2>
+            <p class="patient-detail-meta" id="detail-meta"></p>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <h3 class="chart-title">Progresso por fase</h3>
+          <div class="chart-path-row" id="detail-path-row"></div>
+        </div>
+
+        <div class="chart-card">
+          <h3 class="chart-title">Rendimento geral</h3>
+          <div class="perf-bar" id="detail-perf-bar"></div>
+          <div class="perf-legend">
+            <span class="legend-item"><span class="legend-swatch legend-correct"></span>Acertos <strong id="detail-correct-count">0</strong></span>
+            <span class="legend-item"><span class="legend-swatch legend-wrong"></span>Erros <strong id="detail-wrong-count">0</strong></span>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <h3 class="chart-title">Erros recorrentes</h3>
+          <div class="error-bars" id="detail-error-bars"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js?v=16"></script>
+</body>
+</html>
