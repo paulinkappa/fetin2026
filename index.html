@@ -6,13 +6,18 @@
   <title>VozAtiva</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;900&family=Baloo+2:wght@700;800;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
   <script>
     (function () {
       try { if (localStorage.getItem('vozativa_theme') === 'dark') document.body.classList.add('dark-mode'); }
       catch (e) {}
+      try {
+        const saved = localStorage.getItem('vozativa_reduced_motion');
+        const wantsReduced = saved === '1' || (saved === null && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        if (wantsReduced) document.body.classList.add('reduced-motion');
+      } catch (e) {}
     })();
   </script>
 
@@ -102,6 +107,21 @@
           Sair
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- ════ BOAS-VINDAS (uma vez por conta, antes de tudo) ════ -->
+  <div class="perm-overlay hidden" id="welcome-overlay" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <div class="perm-card welcome-card">
+      <div class="perm-mic-icon welcome-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+      </div>
+      <h2 class="perm-title" id="welcome-title">Bem-vindo(a) ao VozAtiva!</h2>
+      <p class="perm-desc" id="welcome-desc">Texto de boas-vindas.</p>
+      <ul class="welcome-steps" id="welcome-steps"></ul>
+      <button class="btn btn-primary perm-btn" onclick="closeWelcomeOverlay()"><span class="btn-label" id="welcome-cta">Vamos começar!</span></button>
     </div>
   </div>
 
@@ -271,6 +291,45 @@
         </details>
       </div>
       <button class="btn btn-ghost help-replay-btn" onclick="replayTour()">Rever tutorial guiado</button>
+    </div>
+  </div>
+
+  <!-- ════ PAINEL: CRÉDITOS ════ -->
+  <div class="panel-overlay hidden" id="credits-panel">
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">Créditos</h2>
+        <button class="icon-btn panel-close" onclick="closePanel('credits-panel')" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="credits-intro">O VozAtiva é um projeto acadêmico — um complemento ao acompanhamento fonoaudiológico já realizado com um profissional, não um substituto dele.</p>
+      <div class="credits-list">
+        <div class="credits-row">
+          <span class="credits-label">Idealizador do projeto</span>
+          <span class="credits-value pending">A definir</span>
+        </div>
+        <div class="credits-row">
+          <span class="credits-label">Orientador do projeto</span>
+          <span class="credits-value pending">A definir</span>
+        </div>
+        <div class="credits-row">
+          <span class="credits-label">Médicos consultados</span>
+          <span class="credits-value pending">A definir</span>
+        </div>
+        <div class="credits-row">
+          <span class="credits-label">Identidade visual</span>
+          <span class="credits-value pending">A definir</span>
+        </div>
+        <div class="credits-row">
+          <span class="credits-label">Desenvolvimento auxiliado por</span>
+          <span class="credits-value">Claude (Anthropic)</span>
+        </div>
+        <div class="credits-row">
+          <span class="credits-label">Número do projeto</span>
+          <span class="credits-value">160</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -595,6 +654,18 @@
               </span>
               <span class="dd-label" id="notif-label">Notificações ativas</span>
             </button>
+            <button class="dropdown-item" id="dd-motion" onclick="toggleReducedMotion()">
+              <span class="dd-icon" id="motion-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+              </span>
+              <span class="dd-label" id="motion-label">Movimento normal</span>
+            </button>
+            <button class="dropdown-item" id="dd-credits" onclick="openCreditsModal()">
+              <span class="dd-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.5 13.5 17 22l-5-3-5 3 1.5-8.5"/></svg>
+              </span>
+              <span class="dd-label">Créditos</span>
+            </button>
           </div>
         </div>
 
@@ -625,6 +696,11 @@
         </div>
         <p class="home-greeting" id="home-greeting"></p>
         <h1 class="home-title">VozAtiva</h1>
+        <div class="streak-badge hidden" id="streak-badge" title="Dias seguidos treinando">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+          <span id="streak-count">0</span>
+          <span id="streak-label">dias seguidos</span>
+        </div>
         <p class="home-tagline" id="home-tagline">Treine sua fala com clareza e confiança</p>
       </div>
 
@@ -833,6 +909,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=16"></script>
+  <script src="script.js?v=17"></script>
 </body>
 </html>

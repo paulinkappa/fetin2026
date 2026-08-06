@@ -336,6 +336,7 @@ function stopSpeechRecognition() {
 let darkMode = false;
 let soundOn  = true;
 let notifOn  = true;
+let reducedMotion = false;
 let voiceGender = "female";
 
 // ── Áudio (waveform) ──────────────────────────
@@ -479,6 +480,9 @@ function goHome() {
   checkPendingInvites();
   updateHomeTagline();
   clearHomeSearch();
+  const users = getUsers();
+  const user = sessionEmail ? users[sessionEmail] : null;
+  if (user) updateStreakBadge(user.role === "medico" ? null : user);
 }
 
 function goToPath(introAnimation) {
@@ -1068,7 +1072,33 @@ function getProgress(user) {
   if (!user.progress) user.progress = { completedGroupIds: [], attempts: {} };
   if (!user.progress.completedGroupIds) user.progress.completedGroupIds = [];
   if (!user.progress.attempts) user.progress.attempts = {};
+  if (!user.progress.streak) user.progress.streak = 0;
+  if (!user.progress.lastTrainedDate) user.progress.lastTrainedDate = null;
   return user.progress;
+}
+
+// ── Sequência diária (streak) ──────────────────
+// Mecânica leve e funcional (inspirada no Duolingo): incentiva a prática
+// diária, que é justamente o que sustenta resultado real num tratamento
+// fonoaudiológico. Conta no máximo uma vez por dia — completar várias
+// fases no mesmo dia não infla o número, e faltar um dia reinicia a
+// contagem para 1 no próximo treino (sem zerar de forma punitiva: o dia
+// de hoje já conta como o novo começo).
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function offsetDateString(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function registerStreakForToday(progress) {
+  const today = todayDateString();
+  if (progress.lastTrainedDate === today) return false; // já contou hoje
+  progress.streak = progress.lastTrainedDate === offsetDateString(-1) ? (progress.streak || 0) + 1 : 1;
+  progress.lastTrainedDate = today;
+  return true;
 }
 
 // ID da conta: 4 dígitos totalmente aleatórios (0-9), únicos entre todas as
@@ -1188,7 +1218,7 @@ function handleSignup(e) {
   const base = {
     name, email, password: pass, phone, avatar: null, bio: "",
     role: signupRole, progress: { completedGroupIds: [], attempts: {} },
-    accountId: generateAccountId(users),
+    accountId: generateAccountId(users), welcomeSeen: false,
   };
   if (signupRole === "medico") {
     base.crm = crmVal;
@@ -1252,8 +1282,27 @@ function applyUserToUI(user) {
   updateHomeTagline();
   refreshProfilePanelForRole();
   checkPendingInvites();
-  // Só paciente treina fonemas — médico nunca precisa de microfone.
-  if (user.role === "paciente") bootstrapMicPermission();
+  updateStreakBadge(isDoctor ? null : user);
+  // Boas-vindas aparecem uma única vez por conta, antes de qualquer outra
+  // coisa — inclusive antes do pedido de permissão de microfone, que só é
+  // disparado depois que a pessoa fecha as boas-vindas (ver
+  // closeWelcomeOverlay). Só paciente treina fonemas — médico nunca
+  // precisa de microfone.
+  const welcomeShown = maybeShowWelcome(user);
+  if (!welcomeShown && !isDoctor) bootstrapMicPermission();
+}
+
+// Sequência de dias treinando — mecânica leve inspirada no Duolingo, que
+// existe para incentivar a prática diária (o que de fato sustenta
+// resultado num tratamento fonoaudiológico), não como decoração.
+function updateStreakBadge(user) {
+  const badge = document.getElementById("streak-badge");
+  if (!badge) return;
+  const streak = user ? getProgress(user).streak : 0;
+  badge.classList.toggle("hidden", !streak);
+  if (!streak) return;
+  document.getElementById("streak-count").textContent = streak;
+  document.getElementById("streak-label").textContent = streak === 1 ? "dia seguido" : "dias seguidos";
 }
 
 // Muda toda vez que a tela inicial é exibida (médico mantém uma frase fixa).
@@ -1632,6 +1681,36 @@ function loadThemePreference() {
   darkMode = document.body.classList.contains("dark-mode");
   updateThemeIcons();
 }
+
+// ── Reduzir movimento (acessibilidade) ────────
+// Desliga/encurta confete, animações de entrada e pulsos contínuos.
+// Padrão inicial segue a preferência do sistema operacional
+// (prefers-reduced-motion), mas o usuário pode ligar ou desligar
+// manualmente a qualquer momento — a escolha fica salva.
+function loadReducedMotionPreference() {
+  reducedMotion = document.body.classList.contains("reduced-motion");
+  updateReducedMotionUI();
+}
+function updateReducedMotionUI() {
+  const label = document.getElementById("motion-label");
+  if (label) label.textContent = reducedMotion ? "Movimento reduzido" : "Movimento normal";
+  const dd = document.getElementById("dd-motion");
+  if (dd) dd.classList.toggle("item-active", reducedMotion);
+  const icon = document.getElementById("motion-icon");
+  if (icon) {
+    icon.innerHTML = reducedMotion
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>`;
+  }
+  syncHasActive("dropdown-settings");
+}
+function toggleReducedMotion() {
+  reducedMotion = !reducedMotion;
+  document.body.classList.toggle("reduced-motion", reducedMotion);
+  localStorage.setItem("vozativa_reduced_motion", reducedMotion ? "1" : "0");
+  updateReducedMotionUI();
+  playBeep(reducedMotion ? 420 : 560, 0.1);
+}
 function toggleDarkMode() {
   darkMode = !darkMode;
   document.body.classList.toggle("dark-mode", darkMode);
@@ -1748,6 +1827,60 @@ function playPhonemeAudio() {
 // ══════════════════════════════════════════════
 function openHelpPanel() {
   openPanel("help-panel");
+}
+
+// ══════════════════════════════════════════════
+// CRÉDITOS
+// ══════════════════════════════════════════════
+function openCreditsModal() {
+  openPanel("credits-panel");
+}
+
+// ══════════════════════════════════════════════
+// BOAS-VINDAS — uma vez por conta, antes de qualquer outra coisa
+// (inclusive antes do pedido de permissão de microfone)
+// ══════════════════════════════════════════════
+const WELCOME_STEP_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+function maybeShowWelcome(user) {
+  if (!user || user.welcomeSeen) return false;
+  const isDoctor = user.role === "medico";
+  document.getElementById("welcome-title").textContent = isDoctor ? `Bem-vindo(a), ${(user.name || "").split(" ")[0] || "Doutor(a)"}!` : `Bem-vindo(a), ${(user.name || "").split(" ")[0] || ""}!`;
+  document.getElementById("welcome-desc").textContent = isDoctor
+    ? "O VozAtiva é uma ferramenta de apoio para você acompanhar, à distância, pacientes que já estão em tratamento fonoaudiológico com você — um complemento às consultas, não um substituto."
+    : "O VozAtiva é um complemento ao seu tratamento com o(a) fonoaudiólogo(a) — ele te ajuda a praticar entre as consultas, não substitui o acompanhamento profissional.";
+  const steps = isDoctor
+    ? [
+        "Adicione pacientes pelo ID da conta deles, no Painel do Médico.",
+        "Crie exercícios personalizados e reordene a trilha de cada paciente.",
+        "Acompanhe o progresso e os erros mais recorrentes de cada um.",
+      ]
+    : [
+        "Pratique um pouquinho todo dia — é isso que mais ajuda no seu tratamento.",
+        "Toque em \"Gravar Voz\", diga o fonema e siga a trilha de fases.",
+        "Ficou com dúvida? O botão de ajuda (💡) está sempre por perto.",
+      ];
+  const list = document.getElementById("welcome-steps");
+  list.innerHTML = "";
+  steps.forEach(text => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="step-icon">${WELCOME_STEP_ICON}</span><span>${escapeHtml(text)}</span>`;
+    list.appendChild(li);
+  });
+  document.getElementById("welcome-cta").textContent = isDoctor ? "Entendi" : "Vamos começar!";
+  showOverlay(document.getElementById("welcome-overlay"));
+  return true;
+}
+function closeWelcomeOverlay() {
+  hideOverlay(document.getElementById("welcome-overlay"));
+  if (sessionEmail) {
+    const users = getUsers();
+    const user = users[sessionEmail];
+    if (user && !user.welcomeSeen) {
+      user.welcomeSeen = true;
+      saveUserRecords({ [sessionEmail]: user });
+      if (user.role === "paciente") bootstrapMicPermission();
+    }
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -2045,6 +2178,7 @@ function markGroupCompleted(groupId) {
   if (!user) return;
   const progress = getProgress(user);
   if (!progress.completedGroupIds.includes(groupId)) progress.completedGroupIds.push(groupId);
+  registerStreakForToday(progress);
   saveUserRecords({ [sessionEmail]: user });
 }
 
@@ -2461,7 +2595,7 @@ function finishPhase() {
   document.getElementById("final-stats-summary").textContent =
     `${phaseLen} ${phaseLen === 1 ? "questão proposta" : "questões propostas"}, ${correctCount} ${correctCount === 1 ? "acertada" : "acertadas"}, ${incorrectCount} ${incorrectCount === 1 ? "errada" : "erradas"} e ${skippedCount} ${skippedCount === 1 ? "pulada" : "puladas"}.`;
 
-  if (!unsatisfactory) startFinalConfetti();
+  if (!unsatisfactory && !reducedMotion) startFinalConfetti();
   playBeep(880, 0.3, "triangle", 0.25);
 }
 
@@ -3131,4 +3265,5 @@ function openPatientDetail(email) {
 // ══════════════════════════════════════════════
 migrateAccountIds();
 loadThemePreference();
+loadReducedMotionPreference();
 initAuthUI();

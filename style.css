@@ -121,6 +121,42 @@ body.dark-mode .blob-3 { background: #0f2a1a; }
 @keyframes icon-spin-in { from { transform: rotate(-25deg) scale(.7); opacity: 0; } to { transform: rotate(0) scale(1); opacity: 1; } }
 
 /* ══════════════════════════════════════════════
+   REDUZIR MOVIMENTO — configuração de acessibilidade
+   (independente do prefers-reduced-motion do sistema,
+   controlável pelo próprio app). Desliga entradas
+   animadas, pulsos contínuos e o confete; estados que
+   comunicam informação (ex.: botão gravando) mantêm uma
+   diferença visual estática, só sem a animação.
+══════════════════════════════════════════════ */
+body.reduced-motion .auth-logo,
+body.reduced-motion .auth-card,
+body.reduced-motion .home-hero,
+body.reduced-motion .home-actions,
+body.reduced-motion .panel-card,
+body.reduced-motion .modal-card,
+body.reduced-motion .perm-card,
+body.reduced-motion .card.challenge-enter,
+body.reduced-motion .success-badge.show,
+body.reduced-motion .final-screen,
+body.reduced-motion .final-medal,
+body.reduced-motion .final-title,
+body.reduced-motion .final-subtitle,
+body.reduced-motion .final-stats,
+body.reduced-motion .final-message,
+body.reduced-motion .btn-restart,
+body.reduced-motion .final-home-btn,
+body.reduced-motion .path-node-intro,
+body.reduced-motion .dropdown-menu {
+  animation: none !important;
+}
+body.reduced-motion .phoneme-box.recording{ animation: none; box-shadow: 0 4px 30px rgba(61,207,99,.45); }
+body.reduced-motion .btn-record.active{ animation: none; box-shadow: 0 4px 20px rgba(45,191,82,.55); }
+body.reduced-motion .phoneme-audio-btn.playing{ animation: none; }
+body.reduced-motion .logo-wave span{ animation: none; transform: scaleY(.7); }
+body.reduced-motion .capture-dot{ animation: none; }
+body.reduced-motion #final-confetti-canvas{ display: none; }
+
+/* ══════════════════════════════════════════════
    TELA DE AUTENTICAÇÃO
 ══════════════════════════════════════════════ */
 .auth-wrap {
@@ -245,6 +281,14 @@ body.dark-mode .dd-icon-danger { background: #3b1212 !important; }
 .home-greeting { font-family: 'Baloo 2', cursive; font-size: 1.05rem; font-weight: 800; color: var(--green-xdk); min-height: 1.3em; }
 .home-title { font-family: 'Baloo 2', cursive; font-size: 3.2rem; font-weight: 900; color: var(--green-xdk); letter-spacing: -1px; line-height: 1; }
 .home-tagline { font-size: 1rem; font-weight: 600; color: var(--text-muted); text-align: center; max-width: 260px; line-height: 1.5; }
+.streak-badge {
+  display: flex; align-items: center; gap: 6px; padding: 6px 14px 6px 10px; border-radius: 999px;
+  background: var(--card2); border: 1.5px solid var(--border); color: #ea7c2b; font-weight: 800; font-size: .82rem;
+}
+.streak-badge svg { width: 17px; height: 17px; flex-shrink: 0; }
+.streak-badge #streak-count { color: var(--text); font-family: 'Baloo 2', cursive; font-size: 1rem; }
+.streak-badge #streak-label { color: var(--text-muted); font-weight: 700; }
+body.dark-mode .streak-badge { color: #ff9d5c; }
 
 /* Sem justify-content:space-between de propósito: com mais itens no topo
    (busca, resultados, convite) isso empurrava a busca para longe dos
@@ -436,6 +480,20 @@ body.dark-mode .dd-icon-danger { background: #3b1212 !important; }
 .help-replay-btn { width: 100%; border-radius: 999px; padding: 12px 20px; font-size: .9rem; }
 
 /* ══════════════════════════════════════════════
+   CRÉDITOS
+══════════════════════════════════════════════ */
+.credits-intro { font-size: .86rem; font-weight: 600; color: var(--text-muted); line-height: 1.55; margin: 0 0 18px; }
+.credits-list { display: flex; flex-direction: column; }
+.credits-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+  padding: 13px 0; border-top: 1px solid var(--border);
+}
+.credits-row:first-child { border-top: none; }
+.credits-label { font-size: .82rem; font-weight: 700; color: var(--text-muted); }
+.credits-value { font-size: .88rem; font-weight: 800; color: var(--text); text-align: right; }
+.credits-value.pending { color: var(--text-muted); font-weight: 600; font-style: italic; }
+
+/* ══════════════════════════════════════════════
    TOUR GUIADO (spotlight)
 ══════════════════════════════════════════════ */
 .tour-overlay { position: fixed; inset: 0; z-index: 600; }
@@ -504,6 +562,15 @@ body.dark-mode .dd-icon-danger { background: #3b1212 !important; }
 .perm-mic-icon svg { width: 28px; height: 28px; }
 .perm-title { font-family: 'Baloo 2', cursive; font-size: 1.5rem; font-weight: 800; color: var(--green-xdk); }
 .perm-desc { font-size: .9rem; color: var(--text-muted); font-weight: 600; line-height: 1.55; }
+
+.welcome-card { max-width: 400px; }
+.welcome-steps { list-style: none; margin: 2px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.welcome-steps li {
+  display: flex; align-items: flex-start; gap: 10px; font-size: .85rem; font-weight: 600; color: var(--text);
+  background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; line-height: 1.45;
+}
+.welcome-steps .step-icon { flex-shrink: 0; width: 20px; height: 20px; color: var(--green-dk); }
+.welcome-steps .step-icon svg { width: 100%; height: 100%; }
 
 /* CARD */
 .card { background: var(--card); border-radius: var(--radius); padding: 22px 20px 20px; box-shadow: var(--shadow); border: 2px solid var(--border); position: relative; overflow: hidden; transition: background .35s, border-color .35s; }

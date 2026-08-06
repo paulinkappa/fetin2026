@@ -1,6 +1,6 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-08-04 (Rodada 11)
+  Última atualização: 2026-08-06 (Rodada 12)
 =============================================
 
 ── SOBRE O PROJETO ──────────────────────────
@@ -51,6 +51,11 @@ Infra de preview local (sem Node/Python disponíveis na máquina):
   .claude/launch.json         — configuração do servidor de preview
   .claude/static-server.ps1   — servidor estático mínimo em PowerShell
                                   (HttpListener), serve os 3 arquivos acima
+
+Controle de versão: repositório git conectado a
+https://github.com/paulinkappa/fetin2026 (branch main). .gitignore
+exclui .claude/settings.local.json (configuração pessoal da máquina, não
+faz parte do projeto).
 
 Telas (todas em index.html, alternadas via showOnlyScreen()):
   #screen-auth    — login / cadastro (paciente ou fonoaudiólogo)
@@ -117,6 +122,13 @@ médico (arrastar-e-soltar no Editor de Exercícios).
 ── FUNCIONALIDADES IMPLANTADAS ──────────────
 
 AUTENTICAÇÃO E CONTAS
+  - Boas-vindas: na primeira vez que cada conta entra no app (antes de
+    qualquer outra coisa, inclusive antes do pedido de permissão de
+    microfone), uma tela explica o que é o VozAtiva — deixando claro que é
+    um complemento ao tratamento com o(a) fonoaudiólogo(a), não um
+    substituto — e traz 3 instruções básicas de uso, diferentes para
+    paciente e para médico. Aparece uma única vez por conta (fica marcado
+    no próprio registro do usuário, não no dispositivo)
   - Cadastro com seleção de tipo de conta: Paciente ou Fonoaudiólogo(a)
   - Campos comuns: nome, e-mail, senha (mín. 5 caracteres, com botão de
     mostrar/ocultar em todos os campos de senha), telefone no formato
@@ -140,11 +152,13 @@ AUTENTICAÇÃO E CONTAS
     explicitamente preenchidos (ou limpos) a cada troca
   - Troca de conta: lista todas as contas salvas neste dispositivo,
     destaca a conta atual (cor diferente + selo "Atual", não clicável),
-    permite alternar entre as demais e remover qualquer uma delas deste
-    dispositivo pelo ícone de lixeira (única forma de remoção — o antigo
-    item redundante no dropdown de perfil foi removido); limpa
-    automaticamente vínculos médico-paciente, convites e amizades que
-    referenciavam a conta removida
+    permite remover qualquer uma delas deste dispositivo pelo ícone de
+    lixeira (única forma de remoção — o antigo item redundante no
+    dropdown de perfil foi removido); limpa automaticamente vínculos
+    médico-paciente, convites e amizades que referenciavam a conta
+    removida. Alternar para outra conta agora sempre pede a senha
+    específica daquela conta antes de entrar (antes trocava direto, sem
+    confirmação nenhuma)
   - Sessão persiste entre recarregamentos (localStorage)
   - Sair da conta: se houver qualquer conta salva neste dispositivo (a que
     está saindo ou outras), em vez de ir direto para a tela de
@@ -349,6 +363,18 @@ TREINO (por fase) — reconhecimento contínuo
     do navegador para checar em silêncio se a permissão já foi concedida
     ou negada antes, sem reabrir a tela de pedido em sessões seguintes
 
+SEQUÊNCIA DIÁRIA (streak)
+  - Mecânica leve e funcional (inspirada no Duolingo, sem se transformar
+    num jogo à parte): a tela inicial do paciente mostra um selo simples
+    "🔥 N dias seguidos" sempre que houver ao menos 1 dia de sequência
+  - Conta no máximo uma vez por dia (completar várias fases no mesmo dia
+    não infla o número); complementar uma fase no dia seguinte ao último
+    treino soma +1; um intervalo maior que isso reinicia a contagem a
+    partir de 1 no próximo treino — nunca há pop-up nem aviso de "perdeu a
+    sequência", só o número atualizado
+  - Existe para reforçar a prática diária, que é o que sustenta resultado
+    real num tratamento fonoaudiológico — não é decoração
+
 PAINEL DO MÉDICO
   - Lista "Meus pacientes" com foto, nível, fases concluídas e % de acerto
     (a busca por esses pacientes acontece na tela inicial, não aqui) —
@@ -404,6 +430,22 @@ FRASES MOTIVACIONAIS (tela inicial)
 SOM E NOTIFICAÇÕES
   - Beeps sintéticos de navegação/feedback, silenciáveis
   - Notificações do navegador (permissão real)
+  - "Movimento reduzido": opção nas configurações que desliga confete,
+    animações de entrada de tela/painel/modal e pulsos contínuos (onda do
+    logo, botão de gravar, ícone de áudio tocando) — estados que também
+    comunicam informação (ex.: gravando) mantêm uma diferença visual
+    estática no lugar do pulso, nunca ficam idênticos ao estado neutro.
+    O padrão inicial já vem ativado sozinho se o sistema operacional pedir
+    menos movimento (prefers-reduced-motion), mas fica disponível como
+    opção explícita dentro do app independente disso, e a escolha do
+    usuário fica salva
+
+CRÉDITOS
+  - Painel acessível pelo menu de configurações, listando: idealizador do
+    projeto, orientador do projeto, médicos consultados, identidade
+    visual, desenvolvimento auxiliado por Claude (Anthropic) e número do
+    projeto (160). Os nomes ainda não foram informados pelo usuário do
+    projeto — aparecem como "A definir" até serem enviados
 
 TUTORIAL GUIADO E AJUDA
   - Tour em spotlight (resto da tela ~80% escurecido) na primeira visita a
@@ -463,6 +505,9 @@ ACESSIBILIDADE E QUALIDADE DE CLIQUE
     trocar de conta se redesenham com o dado mais novo)
 
 ── PENDÊNCIAS / PRÓXIMOS PASSOS ─────────────
+  - Preencher os nomes reais no painel de Créditos (idealizador,
+    orientador, médicos consultados, identidade visual) — hoje aparecem
+    como "A definir" porque ainda não foram informados
   - Reconhecimento de fala real integrado (Rodada 10); ainda compara o
     TEXTO reconhecido pelo motor do navegador, não a qualidade fonética/
     articulatória da pronúncia em si (ex.: não avalia sotaque, clareza ou
@@ -868,4 +913,32 @@ Rodada 11 — 2026-08-04
     bloqueio de microfone em contexto inseguro até PWA e uma matriz de
     testes cruzados — ver seção dedicada acima
   - Cache-busting de script.js/style.css atualizado para v=15
+
+Rodada 12 — 2026-08-06
+  - Trocar de conta (painel "Trocar de conta", com a sessão já aberta)
+    passou a exigir a senha específica da conta escolhida antes de
+    entrar — antes trocava direto, sem nenhuma confirmação
+  - Repositório git inicializado e conectado a
+    https://github.com/paulinkappa/fetin2026; estado do projeto até aqui
+    enviado como commit de checkpoint antes de mudanças maiores
+  - Sequência diária (streak) leve e funcional: selo "🔥 N dias seguidos"
+    na tela inicial do paciente, contando no máximo uma vez por dia —
+    mecânica inspirada no Duolingo, mas mantendo o foco do produto em
+    reforçar a prática real do tratamento, não em virar um jogo à parte
+  - Tela de boas-vindas com instruções básicas, exibida uma única vez por
+    conta antes de qualquer outra coisa (inclusive antes do pedido de
+    microfone) — deixa explícito que o VozAtiva complementa o
+    acompanhamento com o(a) fonoaudiólogo(a), não o substitui, e explica
+    em 3 passos como usar o app (paciente e médico têm textos diferentes)
+  - Nova configuração "Movimento reduzido": desliga confete, animações de
+    entrada de tela/painel/modal e pulsos contínuos (onda do logo, botão
+    de gravar, ícone de áudio), mantendo diferença visual estática onde
+    o movimento também carregava informação de estado. Vem ativada
+    sozinha se o sistema operacional já pedir menos movimento, mas fica
+    disponível como opção explícita e persistente dentro do app
+  - Painel de Créditos, acessível pelas configurações: idealizador,
+    orientador, médicos consultados, identidade visual (ainda "A definir"
+    — nomes não informados), desenvolvimento auxiliado por Claude
+    (Anthropic) e número do projeto (160)
+  - Cache-busting de script.js/style.css atualizado para v=17
 =============================================
