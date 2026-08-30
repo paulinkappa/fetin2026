@@ -1,6 +1,6 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-08-06 (Rodada 12)
+  Última atualização: 2026-08-29 (Rodada 34)
 =============================================
 
 ── SOBRE O PROJETO ──────────────────────────
@@ -57,6 +57,12 @@ https://github.com/paulinkappa/fetin2026 (branch main). .gitignore
 exclui .claude/settings.local.json (configuração pessoal da máquina, não
 faz parte do projeto).
 
+Pasta avatares/ — ícones de perfil predefinidos (ver "Ícones de perfil
+predefinidos" na Rodada 16). 8 arquivos SVG de exemplo já incluídos,
+funcionais; a lista de arquivos usados fica em PRESET_AVATARS
+(script.js) — para adicionar mais, basta soltar o arquivo em avatares/
+e incluir o nome nessa lista.
+
 Telas (todas em index.html, alternadas via showOnlyScreen()):
   #screen-auth    — login / cadastro (paciente ou fonoaudiólogo)
   #screen-home    — tela inicial (perfil, configurações, busca, convites)
@@ -74,7 +80,8 @@ Padrão de sobreposição:
 
 ── MODELO DE DADOS (localStorage) ───────────
 Chave "vozativa_users": objeto { email: usuario }. Campos do usuário:
-  name, email, password, phone, avatar, bio, role ("paciente"|"medico"),
+  name, email, passwordHash, passwordSalt (senha nunca gravada em texto
+  puro — ver Rodada 19), phone, avatar, bio, role ("paciente"|"medico"),
   accountId (4 dígitos aleatórios, único, identifica a conta — usado para
   todo vínculo entre contas, nunca o telefone)
 
@@ -99,7 +106,14 @@ Chave "vozativa_users": objeto { email: usuario }. Campos do usuário:
   tempo real a partir de progress.completedGroupIds.
 
 Outras chaves: vozativa_session_email, vozativa_theme,
-vozativa_tour_home_seen / _path_seen / _app_seen.
+vozativa_tour_home_seen / _path_seen / _app_seen, vozativa_chats (ver
+CHAT abaixo — objeto { conversaId: { messages: [] } }, conversaId é os
+dois e-mails ordenados e unidos por "::").
+
+IndexedDB "vozativa_media" (ver Rodada 20): usado só para o BINÁRIO de
+fotos/vídeos/áudios de chat e vídeos de exercício físico — grandes
+demais pro localStorage. O localStorage guarda só a referência (id) e
+os metadados; nada de mídia grande vira base64 no blob JSON principal.
 
 ── GRUPOS DE DESAFIOS ────────────────────────
 7 grupos base, 65 fonemas no total (médicos podem adicionar grupos e
@@ -146,6 +160,9 @@ AUTENTICAÇÃO E CONTAS
     no carregamento do app e garante ID único mesmo em contas criadas
     antes desse recurso existir
   - Login com e-mail e senha
+  - Senha nunca é gravada em texto puro: hash SHA-256 com sal aleatório
+    por conta (Web Crypto, nativo do navegador — ver Rodada 19). Login,
+    troca de conta e tela de seleção de conta comparam hash com hash
   - Cada conta é 100% independente: nenhum campo (nome, foto, recado
     pessoal, progresso, etc.) é herdado de outra conta ao cadastrar, fazer
     login ou trocar de conta — todos os campos do perfil são
@@ -159,7 +176,9 @@ AUTENTICAÇÃO E CONTAS
     removida. Alternar para outra conta agora sempre pede a senha
     específica daquela conta antes de entrar (antes trocava direto, sem
     confirmação nenhuma)
-  - Sessão persiste entre recarregamentos (localStorage)
+  - Sessão persiste entre recarregamentos (localStorage) — MUDOU na
+    Rodada 18: os dados continuam salvos, mas deixaram de ser usados
+    para pular a tela de login sozinhos ao abrir o app; ver Rodada 18
   - Sair da conta: se houver qualquer conta salva neste dispositivo (a que
     está saindo ou outras), em vez de ir direto para a tela de
     cadastro/login, abre uma tela de seleção de conta com o nome de cada
@@ -212,8 +231,9 @@ AMIGOS E RANKING (paciente)
     card, com confirmação antes de remover) — a remoção desfaz o vínculo
     dos dois lados
   - Painel "Ranking de desempenho" (ícone de pódio) lista o próprio
-    usuário e seus amigos ordenados por fases concluídas e % de acerto,
-    destacando o próprio usuário na lista
+    usuário e seus amigos ordenados por % de acerto (critério principal,
+    desde a Rodada 19) e fases concluídas como desempate, destacando o
+    próprio usuário na lista
   - Cards de perfil (tanto na aba de amigos quanto na lista de pacientes
     do Painel do Médico) têm tamanho padronizado e imutável — o texto de
     estatísticas reserva sempre o mesmo espaço (2 linhas), então um card
@@ -345,11 +365,17 @@ TREINO (por fase) — reconhecimento contínuo
     leva de volta à trilha, "Reiniciar fase" (embaixo, estilo secundário,
     ícone de loop) reinicia a mesma fase do zero
   - Aproveitamento da fase (acertos ÷ total, arredondado para baixo) ≥
-    60%: mensagem sorteada de um banco de 6 frases de conquista, com
-    confete e medalha animados. Aproveitamento < 60%: mensagem sorteada
-    de um banco de 6 frases de incentivo para tentar de novo, sem
-    confete e sem a medalha (o resto da tela — título, estatísticas,
-    botões — permanece igual)
+    65% (PHASE_COMPLETION_THRESHOLD — ver Rodada 19): mensagem sorteada
+    de um banco de 6 frases de conquista, com confete e medalha animados,
+    título "Fase concluída!"/"Parabéns!" e a fase entra de fato em
+    completedGroupIds (desbloqueia a próxima fase e conta no ranking).
+    Aproveitamento < 65%: mensagem sorteada de um banco de 6 frases de
+    incentivo para tentar de novo, sem confete, medalha cinza, título
+    "Quase lá!" e botão "Voltar à trilha" — a fase NÃO é marcada como
+    concluída (pode ser refeita quantas vezes for preciso; a próxima
+    fase continua bloqueada até o limiar ser atingido). A sequência
+    diária (streak) conta de qualquer forma, pela prática do dia, mesmo
+    abaixo do limiar.
   - Placar final detalhado e correto: mostra separadamente Propostas,
     Acertadas, Erradas e Puladas (fala reconhecida como certa soma em
     "acertadas"; silêncio/tempo esgotado sem match soma em "erradas";
@@ -362,6 +388,14 @@ TREINO (por fase) — reconhecimento contínuo
     o paciente entra no app (não mais a cada fase); usa a Permissions API
     do navegador para checar em silêncio se a permissão já foi concedida
     ou negada antes, sem reabrir a tela de pedido em sessões seguintes
+  - Exercício de som sustentado (novo tipo, opcional, definido pelo
+    médico): em vez de pronunciar um fonema único, o paciente precisa
+    SEGURAR o som por N segundos (ex.: "AAAAAAA", "TRTRTRTR",
+    "LLUUUUUA"). Nunca usa reconhecimento de fala real (não faz sentido
+    pra um som repetido/sustentado) — mede só o tempo contínuo de volume
+    acima do limiar, tolerando um blip curto de silêncio (respiração,
+    oclusiva no meio do som) sem reiniciar a contagem. Mostra uma barra
+    de progresso com o tempo já sustentado durante a gravação
 
 SEQUÊNCIA DIÁRIA (streak)
   - Mecânica leve e funcional (inspirada no Duolingo, sem se transformar
@@ -374,6 +408,43 @@ SEQUÊNCIA DIÁRIA (streak)
     sequência", só o número atualizado
   - Existe para reforçar a prática diária, que é o que sustenta resultado
     real num tratamento fonoaudiológico — não é decoração
+
+EXERCÍCIOS FÍSICOS/PRÁTICOS (categoria separada da trilha diária)
+  - Vídeos complementares ao tratamento — feitos com auxílio de objeto
+    (ex.: escova de dente na região do pescoço, rolo de papel na
+    garganta) ou em conjunto — diferente dos fonemas isolados da trilha
+  - Adicionados pelo médico por paciente (mesmo isolamento por conta que
+    o resto do conteúdo personalizado), com título, descrição opcional e
+    vídeo (até 60MB, guardado no IndexedDB — ver MODELO DE DADOS)
+  - Botão "Exercícios Práticos" na tela inicial do paciente (ao lado de
+    "Iniciar tarefa diária") abre a lista; cada vídeo só carrega de fato
+    quando o paciente toca em "Assistir", não todos de uma vez
+
+CHAT (mensagens entre contas vinculadas)
+  - Funciona entre amigos (paciente↔paciente) e entre médico↔paciente
+    com vínculo confirmado — nunca com uma conta sem relação nenhuma;
+    ícone de mensagens (com bolinha de não lida) ao lado do de Amigos/
+    Pacientes na tela inicial, tanto para paciente quanto para médico
+  - Cinco tipos de mensagem, cada um com ícone próprio desenhado no
+    mesmo estilo de traço do resto do app: texto, lembrete (🔔),
+    áudio (gravado na hora, via MediaRecorder — dá pra ouvir depois,
+    diferente do analisador de volume do treino, que só mede em tempo
+    real), foto e vídeo
+  - Mídia grande (áudio/foto/vídeo) vai para o IndexedDB, não para o
+    localStorage — só a referência entra no blob principal
+  - Como o app não tem backend, a conversa só existe de fato entre
+    contas salvas NESTE MESMO dispositivo/navegador — mesma limitação
+    que já vale pra contas em geral (ver "Trocar de conta"). O modelo de
+    dados já fica pronto para um backend futuro, mas hoje não há troca
+    de mensagem entre dois aparelhos físicos diferentes
+  - Foto/vídeo: selecionar o arquivo abre uma prévia (Cancelar/Enviar)
+    antes de qualquer envio. Áudio: gravar abre uma prévia ouvível
+    (Descartar/Enviar, com pausa e busca de trecho) antes de enviar,
+    igual ao WhatsApp — nada é enviado sem confirmação explícita
+  - Lembretes têm aba própria na Home (ícone dedicado, separado do
+    chat): ficam listados ali até o destinatário marcar como feito
+    ("OK"), limitados a 1 por dia por conversa (não impede lembretes
+    para OUTRAS pessoas no mesmo dia, só repetir pra mesma)
 
 PAINEL DO MÉDICO
   - Lista "Meus pacientes" com foto, nível, fases concluídas e % de acerto
@@ -941,4 +1012,607 @@ Rodada 12 — 2026-08-06
     — nomes não informados), desenvolvimento auxiliado por Claude
     (Anthropic) e número do projeto (160)
   - Cache-busting de script.js/style.css atualizado para v=17
-=============================================
+
+Rodada 15 — 2026-08-06
+  - Redesign visual completo da ferramenta principal (index.html,
+    style.css, script.js), a pedido explícito do usuário ("redesign de
+    nível comercial", equipe multi-especialista simulada: UX/produto/
+    gamificação/design cognitivo/acessibilidade/neurodiversidade/
+    fonoaudiologia/motion/front-end). Antes de qualquer alteração, cópia
+    completa do projeto foi salva em BACKUP_REDESIGN_2026-08-06_15-57
+    (verificada idêntica byte-a-byte via diff), preservada sem alterações
+  - Sistema de design novo ("Clay Soft" — mistura de Claymorphism e Soft
+    UI moderno, inspirado também em Duolingo/Headspace/Apple HIG/
+    Material 3, sem copiar nenhum): tokens de cor, sombra em duas camadas
+    (profundidade + contato), raio de borda generoso, tipografia e
+    variáveis de movimento (easings nomeados) redefinidos do zero;
+    decisão deliberada de NÃO usar neumorfismo puro (sombra monocromática
+    sem contorno) por reprovar contraste/afordância — todo cartão/botão
+    tem sombra suave E contorno com contraste real ao mesmo tempo
+  - Todas as telas principais redesenhadas com mudança estrutural real
+    (não só reskin): Autenticação (layout dividido com painel visual em
+    telas largas, colapsando para empilhado no celular), Início, Trilha
+    (nós mais expressivos, próxima fase "respira" sutilmente para
+    convidar o toque), Treino (cartão de desafio, placar segmentado,
+    tela final de celebração), Painel do Médico (cartões de paciente,
+    gráficos). Todos os painéis secundários (Perfil, Contas, Ajuda,
+    Créditos, Amigos, Ranking, Editor de Exercícios do médico) e modais
+    também migrados para o sistema novo
+  - Auditoria de contraste WCAG 2.2 AA medida (fórmula de luminância
+    relativa, não a olho) encontrou 11 combinações reais que reprovavam,
+    a mais grave sendo o próprio botão principal do app (texto branco
+    sobre o gradiente verde chegava a 1.7:1 na ponta clara, contra o
+    mínimo de 4.5:1) — todas recalibradas para passar com folga. Padrão
+    novo adotado: tokens de "cor de texto" (clareiam no tema escuro) e
+    tokens de "preenchimento de botão" (fixos entre temas) separados —
+    eram o mesmo token antes, causando a falha se repetir ao trocar tema
+  - Placar segmentado do treino ganhou texto alternativo à cor
+    (.sr-only) para cada fonema, informando o resultado (acertado/
+    errado/pulado/atual/pendente) também em texto, não só pela cor do
+    preenchimento (WCAG 1.4.1); gráfico "Progresso por fase" do médico
+    ganhou aria-label equivalente
+  - Reavaliação do sistema de gamificação (mantendo a diretriz já
+    estabelecida no projeto de ficar "leve e funcional", não virar um
+    jogo à parte): mecânicas existentes (sequência diária, trilha,
+    medalha final, placar, ranking entre amigos) mantidas por já
+    servirem um propósito único e claro cada uma — nenhuma removida por
+    não haver sobreposição real entre elas. Duas mecânicas novas
+    adicionadas: (1) celebração de desbloqueio — a fase recém-aberta
+    "estala" com um anel de luz ao voltar da tela final, uma vez só; (2)
+    selo de "meta diária" na tela inicial (cumprida/pendente),
+    reaproveitando o mesmo dado que já sustenta a sequência, sem
+    rastreamento novo — sempre em tom convidativo, nunca de cobrança,
+    mesmo no estado pendente ("Ainda dá tempo de treinar hoje", nunca
+    um alerta). "Missões" e "coleção" (também sugeridos no briefing)
+    foram deliberadamente deixados de fora nesta rodada — aumentariam a
+    complexidade na direção de um "jogo à parte", o que o próprio projeto
+    já havia decidido evitar numa rodada anterior
+  - Spinner de carregamento real (novo) conectado ao pedido de permissão
+    de microfone, que antes ficava sem nenhum feedback visual durante a
+    espera do diálogo nativo do navegador
+  - Navegação por teclado revalidada após o redesign: ordem de Tab,
+    retenção de foco (trap) e devolução de foco ao fechar via Esc
+    continuam corretas nos painéis e modais (sistema já existente,
+    construído antes deste redesign, não precisou de mudança); anel de
+    foco agora visível de forma consistente em toda a interface (antes
+    não existia regra explícita de :focus-visible)
+  - Responsividade confirmada em 4 larguras (375/768/1280/1600px):
+    celular retrato, tablet, desktop e ultrawide — conteúdo sempre
+    centralizado com largura máxima respeitada, sem esticar componentes
+  - Cache-busting de style.css/script.js atualizado para v=20
+
+Rodada 16 — 2026-08-06
+  - Limite de 3 exercícios pulados por fase (todas, inclusive as
+    personalizadas do médico): "Pular esse desafio" desabilita ao
+    atingir o limite, com aviso curto na hora em que o limite é
+    alcançado
+  - Medalha da tela final passou a ficar SEMPRE visível (antes sumia
+    abaixo de 60% de aproveitamento) — só a cor muda: dourado (100%,
+    perfeito), azul (60-99%, bom) e cinza (abaixo de 60%). Reconhece a
+    conclusão da fase em qualquer desempenho, em vez de simplesmente
+    esconder o ícone
+  - Bolinhas do fundo (blobs) ganharam movimento fluido contínuo, só na
+    tela de login/cadastro — cada uma segue um caminho de
+    translate+escala diferente, com duração e atraso próprios, para
+    nunca sincronizar (lê como corrente de líquido, não como coisas
+    balançando juntas); anima só "transform" (compositor, sem
+    recalcular layout), custo de performance desprezível; respeita
+    movimento reduzido
+  - Hierarquia da tela inicial invertida: a saudação personalizada
+    ("Olá, Nome!") passou a ser o elemento de maior destaque visual
+    (h1 grande), e "VozAtiva" virou uma identificação pequena logo
+    abaixo do ícone — reforça proximidade em vez de reforçar a marca a
+    cada abertura do app
+  - Selo de meta diária: o ícone passou a ser um check (não mais um
+    círculo vazio) nos dois estados — cinza enquanto pendente, verde ao
+    concluir — e os dois ganharam a mesma animação de flutuação usada
+    no ícone de fogo da sequência, para os dois selos lerem como uma
+    família só de indicadores "vivos"
+  - Permissão de microfone revisada e confirmada correta: pedida uma
+    única vez por dispositivo (vozativa_mic_asked), reutilizada
+    automaticamente entre exercícios (só refaz o pedido se as faixas do
+    stream anterior tiverem terminado — o que acontece exatamente quando
+    a permissão é revogada durante a sessão), com aviso claro e retomada
+    manual quando bloqueada
+  - Créditos atualizados: idealizador do projeto Luan Campos, orientador
+    do projeto Renan Sthel
+  - Corrigido bug real (introduzido no redesign da Rodada 15): o selo de
+    erro (X vermelho após gravação incorreta) nunca aparecia vermelho de
+    verdade — o CSS novo estilizava a classe ".error", mas o JavaScript
+    sempre alternou a classe ".wrong"; corrigido usando o nome de classe
+    real
+  - Rolagem por clique-e-arraste (desktop) implementada nos painéis,
+    resultados de busca e tooltip do tour — usa eventos de mouse
+    "clássicos" (não Pointer Events), então toque e roda/touchpad
+    continuam nativos e intocados; só começa a arrastar de verdade após
+    um pequeno limiar de movimento, então um clique simples num botão
+    dentro da área continua funcionando normalmente; suprime só o clique
+    imediatamente seguinte a um arraste real, pra não "clicar" sem
+    querer no que estiver embaixo do cursor ao soltar
+  - Tela de troca de conta (senha): nome do usuário centralizado junto
+    com o avatar, em vez de alinhado à esquerda em linha
+  - Confirmado (já existia, não precisou de correção): dá para voltar
+    da tela de senha para a lista de contas em "Trocar de conta", nos
+    dois fluxos (painel em sessão e tela cheia pós-logout)
+  - Animações de saída de tela: toda troca de tela agora anima a saída
+    da tela antiga (espelhando a entrada, mais rápida) antes de
+    escondê-la, em vez de cortar seco. Corrigido no processo um bug real
+    de condição de corrida — trocas muito rápidas em sequência podiam
+    fazer a tela de destino ficar escondida por engano, porque a função
+    "adivinhava" qual tela era "a atual" olhando o DOM; agora um estado
+    dedicado (activeScreenName) rastreia isso de forma confiável mesmo
+    com trocas sobrepostas
+  - Botão "+" na aba Amigos abre busca por nome/ID direto no painel
+    (mesma lógica de busca da tela inicial), sem precisar fechar e ir
+    para outra tela
+  - Perfil público: clicar num resultado de busca (tela inicial ou o
+    novo "+" de Amigos) abre um painel só com dados não-sensíveis (nome,
+    ID, nível de aprendizagem) e um botão de solicitar amizade — nunca
+    e-mail, telefone ou progresso detalhado
+  - Ícones de perfil predefinidos: nova pasta avatares/ com 8 ícones SVG
+    de exemplo (funcionais, validam a estrutura de ponta a ponta),
+    seletor no painel de Perfil ("Escolher ícone", ao lado de "Trocar
+    foto"); guardado como caminho de arquivo (não base64), então é bem
+    mais leve no localStorage que uma foto enviada
+  - Cache-busting de style.css/script.js atualizado para v=27
+
+Rodada 17 — 2026-08-06
+  - Rolagem por clique-e-arraste RESTRINGIDA: a versão anterior ativava
+    em todo painel (escopo largo demais). Agora só nas áreas que
+    realmente acumulam bastante conteúdo — lista de Amigos, lista de
+    Contas, resultados de busca, o painel de edição de ordem das fases
+    do médico, a árvore de fases (trilha) e a tela do médico. Em todo o
+    resto (telas de autenticação, início, treino, formulários) só a
+    rolagem nativa (roda, touchpad, toque) continua ativa, sem nenhuma
+    interceptação
+  - Listas de Amigos e de Contas ganharam altura fixa (mostra ~4 itens),
+    com rolagem própria (arraste ou roda do mouse) a partir do 5º item —
+    o painel em si não cresce mais conforme a lista aumenta
+  - Bolinhas do fundo (login/cadastro) reescritas de animação CSS por
+    quadros-chave para um laço de física em JavaScript
+    (requestAnimationFrame): movimento mais rápido (período de ~5-7s,
+    era ~16-23s), amplitude proporcional à largura/altura da tela (bem
+    maior — cobre boa parte da tela, não só perto do canto de origem) e
+    NOVO — repulsão suave ao se aproximar do cursor do mouse, com
+    retorno gradual à trajetória original ao afastar (a força cai a
+    zero sozinha com a distância, sem precisar de um estado "afastado"
+    para desligar). Suavizado por interpolação a cada quadro, então a
+    transição entre "flutuando livre" e "sendo empurrado" nunca dá
+    salto. Só escreve a propriedade CSS transform (compositor, sem
+    recalcular layout) e o laço para de vez (não só pula trabalho)
+    fora da tela de login/cadastro ou com movimento reduzido ativo
+  - Cache-busting de style.css/script.js atualizado para v=29
+
+Rodada 18 — 2026-08-06
+  - "Trocar foto" e "Escolher ícone" viraram um único fluxo — um botão
+    só ("Alterar foto de perfil") abre um painel com "Enviar uma foto"
+    no topo e a grade de ícones predefinidos logo abaixo, sem opções
+    duplicadas
+  - Barra de rolagem de Amigos/Contas agora só aparece de verdade a
+    partir do 5º item — contagem real via JavaScript (não mais uma
+    estimativa de altura em CSS), então até 4 itens o layout fica
+    sempre limpo, sem nenhuma barra à vista
+  - Abas "Entrar"/"Criar conta" com largura igual (antes cada uma tinha
+    o tamanho do próprio texto). Corrigido também um bug real: trocar
+    de aba mudava a altura do formulário (cadastro é bem mais alto que
+    login) e isso recentralizava o bloco do logo acima do card,
+    fazendo-o "pular" — os dois formulários agora ficam empilhados na
+    mesma célula de grid (CSS Grid), então o card sempre reserva a
+    altura do maior dos dois nas duas abas, e trocar de aba não move
+    mais nada ao redor
+  - Tela de Entrar/Criar conta agora é SEMPRE a primeira exibida ao
+    abrir o app — antes, uma sessão salva pulava direto para a tela
+    inicial. Os dados de sessão continuam salvos (nada foi apagado),
+    só deixaram de ser usados pra pular a tela de login sozinhos
+  - Nome do usuário ao lado do ícone de perfil no cabeçalho da tela
+    inicial (antes só o ícone, sem nome)
+  - Corrigido bug real: com a rolagem por clique-e-arraste da trilha/
+    painel do médico (Rodada 17), arrastar DENTRO de um painel aberto
+    por cima delas (ex.: Central de Ajuda) também rolava a árvore de
+    fases ao fundo — o mousedown sobe (bubble) até o documento inteiro
+    não importa o z-index visual por cima. Corrigido checando se há
+    algum painel/modal aberto (overlayStack) antes de deixar a trilha/
+    painel do médico responder ao arraste. Central de Ajuda também
+    ganhou sua própria rolagem por arraste (mais uma "lista extensa")
+  - Corrigido bug real: o selo de erro (X vermelho) usava a classe CSS
+    ".error" que eu tinha adicionado no redesign, mas o JavaScript
+    sempre alternou ".wrong" — o selo nunca ficava vermelho de verdade
+  - Novo espaço reservado para a ilustração da articulação do fonema,
+    entre a caixa de dica de pronúncia e a área da onda sonora, com uma
+    imagem provisória (boca-fonemas/placeholder.svg) — pronto para
+    trocar por imagens reais por fonema no futuro sem mudar a estrutura
+  - Cache-busting de style.css/script.js atualizado para v=32
+
+Rodada 19 — 2026-08-24
+  - Senhas deixaram de ser gravadas em texto puro: hash SHA-256 com um
+    sal aleatório de 16 bytes por conta (Web Crypto, nativo do
+    navegador, sem dependência externa). generateSalt()/hashPassword()/
+    verifyPassword() centralizam a lógica; os 4 pontos que comparavam
+    senha (login, cadastro, troca de conta, seleção de conta pós-logout)
+    passaram a comparar hash com hash, nunca a senha em si. Como isso
+    torna qualquer conta criada ANTES desta rodada inutilizável (o hash
+    salvo não existe para elas), e o pedido desta rodada já era resetar
+    o dispositivo para a apresentação, nenhuma migração retroativa foi
+    escrita — a limpeza de contas antigas (ver abaixo) resolve os dois
+    de uma vez
+  - Aproveitamento mínimo de 65% (nova constante
+    PHASE_COMPLETION_THRESHOLD) para uma fase contar como concluída de
+    verdade: abaixo disso, a fase pode ser refeita quantas vezes for
+    preciso (não fica travada), mas NÃO entra em completedGroupIds — ou
+    seja, não desbloqueia a próxima fase nem conta para o ranking de
+    amigos. A tela de fim de fase abaixo do limiar mostra título "Quase
+    lá!", mensagem de incentivo, medalha cinza e botão "Voltar à
+    trilha" (em vez de "Próxima fase"/"Concluir trilha", que prometeriam
+    um avanço que não aconteceu). A sequência diária (streak) continua
+    contando pela prática do dia, independente do aproveitamento —
+    permanece fiel à diretriz já estabelecida de que streak mede
+    presença, não desempenho
+  - Ranking de amigos passou a ordenar primeiro por % de acerto
+    (desempenho real), com fases concluídas como critério de desempate
+    — antes era o contrário (fases concluídas primeiro), o que permitia
+    subir no ranking só por avançar rápido pela trilha sem acertar
+    nada. Combinado com o item acima, os dois problemas se resolvem
+    juntos: sem o limiar de 65%, "fases concluídas" já não infla mais
+    sozinho, e o ranking olha primeiro para o que realmente importa
+  - Cache-busting de style.css/script.js atualizado para v=33
+
+Rodada 20 — 2026-08-24
+  - Chat entre contas vinculadas (amigos e médico↔paciente), com texto,
+    lembrete, áudio gravado na hora, foto e vídeo — cada tipo com ícone
+    próprio (CHAT_ICON_* em script.js, mesmo estilo de traço do resto do
+    app). Ícone de mensagens (com bolinha de não lida) na tela inicial,
+    ao lado de Amigos/Pacientes. Nova chave vozativa_chats no
+    localStorage, gravação merge-safe (mesmo padrão de
+    saveUserRecords()) — mensagens de uma aba não apagam as de outra
+  - Nova arquitetura de armazenamento de mídia: IndexedDB
+    ("vozativa_media") guarda o binário de fotos/vídeos/áudios de chat e
+    dos vídeos de exercício físico — o localStorage (cota de poucos MB)
+    guarda só metadados e a referência. Necessário porque um único
+    vídeo já estouraria a cota de localStorage sozinho
+  - Categoria "Exercícios Práticos", separada da trilha diária de
+    fonemas: vídeos complementares ao tratamento (com auxílio de
+    objeto, ex.: escova de dente/rolo de papel, ou feitos em conjunto),
+    adicionados pelo médico por paciente no Editor de Exercícios (título
+    + descrição opcional + vídeo até 60MB). Botão dedicado na tela
+    inicial do paciente; cada vídeo só carrega quando o paciente toca em
+    "Assistir", não todos de uma vez
+  - Novo tipo de exercício diário — som sustentado: o médico define, no
+    mesmo formulário de "Adicionar sílaba ou palavra", uma duração
+    opcional (1-6s) para o paciente SEGURAR o som (ex.: "AAAAAAA",
+    "TRTRTRTR", "LLUUUUUA") em vez de pronunciar um fonema único. Ignora
+    o reconhecimento de fala real (não se aplica a um som repetido) e
+    mede só tempo contínuo de volume acima do limiar, com tolerância a
+    um blip curto de silêncio; barra de progresso mostra o tempo já
+    sustentado durante a gravação
+  - Cache-busting de style.css/script.js atualizado para v=34
+
+Rodada 21 — 2026-08-24
+  - Corrigido bug real: o tutorial (tour em spotlight) podia começar por
+    cima das boas-vindas — maybeStartHomeTour()/PathTour/AppTour só
+    checavam se a tela de permissão de microfone estava fechada, nunca
+    se as boas-vindas ainda estavam abertas. Corrigido com uma checagem
+    própria (tourBlockedByOtherOverlay), e ajustado o encadeamento
+    boas-vindas → permissão → tutorial pra nunca deixar o tutorial "sem
+    retomada": bootstrapMicPermission() agora chama
+    resumePendingTourAfterMic() também no caminho silencioso (permissão
+    já pedida antes neste dispositivo por OUTRA conta), e
+    closeWelcomeOverlay() chama isso direto pra médico (que nunca passa
+    pelo fluxo de microfone)
+  - Corrigido bug real crítico: o tooltip do tutorial calculava sua
+    posição ANTES de trocar o texto do passo atual (usava a altura do
+    passo anterior, ou nenhuma no primeiro passo) e usava uma altura fixa
+    de 170px como estimativa em vez de medir a altura real renderizada —
+    em textos mais longos e telas menores (o tutorial da trilha era o
+    caso mais visível), o tooltip saía cortado ou mal posicionado.
+    Corrigido invertendo a ordem (texto primeiro, posição depois) e
+    medindo tip.offsetHeight de verdade; testado em 375×812 nos dois
+    tutoriais mais longos (Home e Trilha) — tooltip sempre dentro da tela
+  - Ao voltar de uma fase concluída, a trilha rola automaticamente até a
+    próxima fase (ou até a fase recém-concluída, se for a última e não
+    houver "próxima" pra rolar) — antes o usuário tinha que procurar
+    manualmente onde a trilha continuava
+  - Chat: selecionar uma foto/vídeo agora abre uma prévia (Cancelar/
+    Enviar) antes de qualquer envio — antes ia direto pro chat assim que
+    o arquivo era escolhido
+  - Chat: gravar um áudio agora abre uma prévia ouvível antes de enviar
+    (Descartar/Enviar), igual ao WhatsApp — usa <audio controls> nativo,
+    que já resolve pausar/retomar e selecionar um trecho específico
+    (arrastando a barra), tanto na prévia quanto nas mensagens de áudio
+    já enviadas (antes só tocava do início ao fim, sem pausa nem busca)
+  - Nova aba "Lembretes" na tela inicial (ícone + painel próprios,
+    separados do chat): lembretes recebidos ficam listados ali até serem
+    marcados como feitos ("OK"), com bolinha de pendência no ícone.
+    Limitados a 1 por dia por conversa (enviar um segundo lembrete pra
+    mesma pessoa no mesmo dia é bloqueado com aviso) — o limite é sobre
+    ter sido ENVIADO hoje, não sobre estar pendente, então marcar como
+    feito não libera um reenvio no mesmo dia
+  - Ícones de "Amigos"/"Pacientes"/"Mensagens" (e agora "Lembretes")
+    ganharam rótulo de texto visível ao lado do ícone — antes dependia
+    só do aria-label (invisível) pra saber o que cada botão fazia.
+    "Pacientes" (painel do médico) ganhou um ícone PRÓPRIO (pessoa + selo
+    clínico), diferente do ícone de "Amigos" (duas pessoas) — antes os
+    dois usavam o mesmo desenho
+  - Removida qualquer menção aos protótipos de boca 3D/2D (pasta
+    prototipos/, descrição na arquitetura, Rodadas 13 e 14 do
+    changelog, referência dentro do comentário do placeholder.svg) — a
+    ideia não será retomada; a pasta prototipos/ foi excluída do
+    projeto (nunca esteve no controle de versão)
+  - Cache-busting de style.css/script.js atualizado para v=35
+
+Rodada 22 — 2026-08-24
+  - Corrigidos os alvos de toque abaixo de 44×44px (achado F12 da
+    auditoria — WCAG 2.5.5), levantados numa varredura completa do
+    style.css, não só a lista original: botão de mostrar/ocultar senha
+    e de copiar ID (34px), remover conta (34px), fechar painel (38px),
+    botões do cabeçalho de trilha/treino/médico — tema, ajuda, gênero de
+    voz (40px, e chegava a encolher para 36px em telas pequenas, o que
+    ia na direção ERRADA: é exatamente no celular que a precisão do
+    toque mais importa), aceitar/recusar/remover amigo (36px), editar/
+    excluir exercício e mover/renomear/excluir fase no Editor de
+    Exercícios do médico (30px), botões da barra de mensagem do chat e
+    de enviar (38px), "OK" de lembrete e as duas abas de papel
+    (paciente/fonoaudiólogo) do cadastro (ambos ficavam um pouco abaixo
+    por causa do padding). Todos agora 44×44px reais (confirmado via
+    getComputedStyle, não só por medida visual)
+  - Testado ao vivo o pior caso (linha de uma fase personalizada no
+    Editor de Exercícios, com os 4 botões de mover/renomear/excluir
+    lado a lado): nenhuma quebra de layout, nenhum scroll horizontal
+    indevido — o nome da fase só recebe menos espaço antes de truncar
+    com reticências, sem cortar nem sobrepor nada
+  - Cache-busting de style.css atualizado para v=36 (só CSS mudou nesta
+    rodada — script.js permanece em v=35)
+
+Rodada 23 — 2026-08-24
+  - Ícones de "Amigos", "Pacientes", "Mensagens" e "Lembretes" na tela
+    inicial passaram de pílula (totalmente arredondado) para retângulo
+    de cantos arredondados (var(--r-md), mesmo raio já usado em
+    account-item/friend-card/chat-contact-row), seguindo o padrão do
+    resto dos botões da ferramenta. Botão de perfil (com foto/nome) NÃO
+    mudou — continua pílula, de propósito, já que não foi pedido
+  - Cache-busting de style.css atualizado para v=37
+
+Rodada 24 — 2026-08-24
+  - Padronizados os 5 botões do cabeçalho da Home (Perfil, Amigos/
+    Pacientes, Mensagens, Lembretes, Configurações): todos usam agora
+    exatamente a mesma estrutura (ícone dentro de um círculo pequeno +
+    rótulo de texto) e o mesmo estilo (retângulo de cantos arredondados,
+    46px de altura). Antes, Perfil era uma pílula totalmente
+    arredondada e Configurações era só um círculo de ícone sem nenhum
+    texto — os dois viraram casos particulares de um único padrão
+    compartilhado (classe icon-btn-labeled), em vez de três variações
+    próprias mantidas em paralelo
+  - Foto de perfil real (não só o ícone padrão) continua encaixando e
+    recortando certinho dentro do círculo, com o resto do botão (nome,
+    formato) intacto — testado ao vivo definindo uma foto de teste
+  - Cache-busting de style.css atualizado para v=38
+
+Rodada 25 — 2026-08-24
+  - Corrigido bug real: com os 5 botões do cabeçalho da Home todos com
+    rótulo de texto agora (Rodada 24), eles deixaram de caber numa
+    linha só em telas mais estreitas e passaram a quebrar para uma
+    segunda linha. Corrigido trocando quebra de linha por rolagem
+    horizontal (mesmo padrão de arrastar-e-rolar já usado em listas
+    longas do app) — o cabeçalho nunca mais quebra linha, mesmo no pior
+    caso testado (nome de conta longo + os 5 botões, em 375px de
+    largura): os botões que não cabem ficam disponíveis rolando pro
+    lado, não empurrados pra baixo
+  - Cache-busting de style.css/script.js atualizado para v=39/v=36
+
+Rodada 26 — 2026-08-24
+  - Os 5 botões do cabeçalho (Perfil/Pacientes/Amigos/Mensagens/
+    Lembretes) voltaram a mostrar só o ícone por padrão — passar o
+    mouse (ou focar via teclado) expande suavemente e revela o nome.
+    O aria-label de cada botão já dizia o nome pro leitor de tela o
+    tempo todo, então nada de acessível se perde com o rótulo visual
+    "fechado" por padrão; bolinha de notificação (Amigos/Mensagens/
+    Lembretes) continua visível mesmo fechado. Resolve de quebra o
+    problema de rolagem horizontal introduzido na Rodada 25 — 5 ícones
+    sozinhos cabem numa linha só em qualquer largura razoável, então a
+    rolagem passa a ser só uma salvaguarda rara, não o caminho comum
+  - Nota técnica: verificar o :focus/:focus-visible neste ambiente de
+    teste automatizado deu falso negativo (document.hasFocus() retorna
+    false numa aba de navegador que nunca ganha foco real de janela do
+    SO) — a regra CSS foi confirmada correta via inspeção direta do
+    CSSOM; a expansão por mouse (:hover) foi confirmada ao vivo com
+    captura de tela
+  - Cache-busting de style.css atualizado para v=43
+
+Rodada 27 — 2026-08-24
+  - Os 5 botões do cabeçalho passaram a ficar espaçados igualmente
+    (justify-content: space-between) em vez de agrupados do lado
+    esquerdo — Perfil na ponta esquerda, Configurações na ponta
+    direita, os três do meio distribuídos com distância idêntica entre
+    todos. Testado e confirmado matematicamente (mesma distância exata
+    entre cada par de botões) tanto em desktop quanto em 375px de
+    largura. A rolagem horizontal da Rodada 25 continua como
+    salvaguarda pra quando não houver espaço (agora um cenário raro,
+    já que só ícones cabem folgado em qualquer largura razoável)
+  - Cache-busting de style.css atualizado para v=44
+
+Rodada 28 — 2026-08-24
+  - Corrigido bug real (regressão introduzida na Rodada 25): o menu
+    suspenso de Perfil e de Configurações (toggleDropdown) ficava
+    invisível ao abrir, mesmo com o clique registrando corretamente
+    (activeDropdown mudava e a classe "hidden" era removida). Causa
+    raiz: a Rodada 25 deu overflow-x:auto ao cabeçalho (.home-top) pra
+    permitir rolagem horizontal; por especificação CSS, dar overflow
+    não-visible a um eixo força o outro eixo a também recortar
+    (overflow-y vira clip mesmo estando "hidden" só nominalmente) — e
+    isso cortava o menu, que é filho position:absolute pensado pra
+    "vazar" pra baixo do botão
+  - Correção: .dropdown-menu passou a usar position:fixed em vez de
+    absolute, com posição (top/left) calculada em JS a partir da
+    posição real do botão (nova função positionDropdownMenu, chamada
+    de dentro de toggleDropdown), incluindo proteção pra não vazar
+    pela borda direita da tela. Isso escapa do recorte de qualquer
+    ancestral com overflow, sem precisar mexer na rolagem da Rodada 25
+  - Testado ao vivo: os dois menus (Perfil e Configurações) agora
+    aparecem corretamente posicionados logo abaixo do respectivo
+    botão, com todos os itens visíveis e clicáveis, e fecham ao clicar
+    fora — sem erros no console
+  - Cache-busting atualizado para style.css v=45 e script.js v=37
+
+Rodada 29 — 2026-08-24
+  - Removido o modelo/ilustração de referência da articulação da boca
+    (#mouth-image, dentro de .mouth-image-wrap) de todos os exercícios.
+    Era sempre a mesma imagem provisória (boca-fonemas/placeholder.svg)
+    em todo fonema — não havia lógica em script.js trocando a imagem
+    por fonema, então não ficou nenhum código morto pra manter
+  - Removido de index.html o bloco <div class="mouth-image-wrap"> com
+    a <img id="mouth-image">, e de style.css as regras .mouth-image-
+    wrap/.mouth-image (inclusive a variante que escondia o bloco em
+    paisagem, agora sem sentido). A pasta boca-fonemas/ com o SVG
+    provisório foi mantida no projeto (não referenciada por nada, caso
+    seja reaproveitada depois), só a exibição na tela de treino saiu
+  - Testado ao vivo: a tela de exercício fecha o espaço corretamente
+    (a caixa de dica passa direto pro aviso de microfone/waveform),
+    sem gap nem erro no console
+  - Cache-busting de style.css atualizado para v=46
+
+Rodada 30 — 2026-08-24
+  - playPhonemeAudio() ganhou um degrau novo de prioridade entre o
+    áudio personalizado do médico e a síntese de voz do navegador:
+    agora tenta tocar um arquivo "fonemas-audio/<FONEMA>.mp3" (ex.:
+    fonemas-audio/A.mp3, fonemas-audio/MA.mp3) antes de cair pro
+    speechSynthesis. A pasta fonemas-audio/ ainda não tem gravações
+    reais — só um LEIA-ME.txt listando os 65 nomes de arquivo
+    esperados (5 vogais + 60 sílabas dos 6 pares de consoantes) e as
+    recomendações de gravação; o app funciona normalmente sem eles,
+    porque a falha ao carregar cai automaticamente pra síntese de voz
+    (comportamento de hoje), sem precisar mexer em código pra ir
+    completando as gravações aos poucos
+  - Refatorado: a cadeia de fallback (áudio custom → arquivo padrão →
+    speechSynthesis → beep) virou uma função genérica
+    (tryPhonemeAudioSources, com guarda "advanced" pra não avançar
+    duas vezes se onerror e a rejeição de play() dispararem juntos),
+    em vez de dois blocos de código quase iguais
+  - Testado ao vivo: sem nenhum arquivo .mp3 presente, o clique no
+    alto-falante ainda aciona speechSynthesis.speak() normalmente
+    (confirmado interceptando a chamada); o 404 esperado do arquivo
+    ausente aparece só como log de rede, sem erro de JS
+  - Cache-busting de script.js atualizado para v=38
+
+Rodada 31 — 2026-08-24
+  - Adicionado fonemas-audio/gerar-audios-elevenlabs.ps1: script
+    PowerShell opcional pra gerar os 65 arquivos .mp3 (ver Rodada 30)
+    via API de Text-to-Speech da ElevenLabs, em vez de gravação humana
+    manual. Roda uma única vez, localmente, lendo a API key de
+    $env:ELEVENLABS_API_KEY (nunca hardcoded/commitada) — o app
+    publicado continua sem nenhuma chamada em tempo real a serviços
+    externos, só toca os .mp3 já gerados por esse script, mantendo a
+    arquitetura 100% estática/sem backend
+  - LEIA-ME.txt atualizado com uma seção citando essa alternativa
+  - Nenhuma mudança em index.html/script.js/style.css nesta rodada
+
+Rodada 32 — 2026-08-24
+  - Abandonada a via ElevenLabs pra gerar os áudios dos fonemas: as
+    duas chaves de API fornecidas retornaram 401 (a segunda com o
+    motivo explícito da própria ElevenLabs — "Unusual activity has
+    been detected on your account, so Free Tier access has been
+    disabled"). Bloqueio da conta na ElevenLabs, não um problema do
+    código/chave em si
+  - Removido fonemas-audio/gerar-audios-elevenlabs.ps1 (da Rodada 31)
+  - Revertido o esquema de dois arquivos por fonema (<FONEMA>-f.mp3/
+    <FONEMA>-m.mp3, criado na Rodada 31 pra caber as vozes feminina e
+    masculina da ElevenLabs) de volta pro esquema simples de um
+    arquivo por fonema (<FONEMA>.mp3, formato da Rodada 30) em
+    playPhonemeAudio (script.js) e no LEIA-ME.txt — sem essa geração
+    automática, não faz sentido manter a complexidade da variação por
+    gênero
+  - Testado ao vivo: com o app limpo, tocar o fonema busca
+    "fonemas-audio/A.mp3" (sem sufixo) e cai certinho pro
+    speechSynthesis quando o arquivo não existe, sem erro de JS
+  - Cache-busting de script.js atualizado para v=40
+
+Rodada 33 — 2026-08-29
+  - Nova fila de aprovação do médico: toda vez que o paciente CONCLUI
+    uma fase (não cada fonema individual), a fase inteira vira UMA
+    entrada de revisão (registerPhaseReview, chamada de dentro de
+    finishPhase), agrupando as tentativas daquela fase pro
+    fonoaudiólogo conferir se o reconhecimento automático acertou.
+    Decisão de escopo: não bloqueia o paciente — ele já avança/
+    desbloqueia a próxima fase normalmente, é só uma auditoria em
+    paralelo (getProgress ganhou o array progress.reviews)
+  - Para o médico poder "ouvir" e validar de verdade (não só confirmar
+    às cegas o certo/errado que o app já calculou), o app agora GRAVA
+    o áudio de cada tentativa confirmada, via MediaRecorder sobre o
+    mesmo micStream já usado pra a análise de volume/reconhecimento
+    (novo: startAudio inicia o MediaRecorder, stopAudioRecordingForReview
+    é chamada de dentro de finishRecording — só em tentativas
+    CONFIRMADAS — pra parar a gravação e salvar o blob no IndexedDB
+    vozativa_media, reaproveitando saveMediaBlob/newMediaId que já
+    existiam pra mídia de chat/exercícios). Tentativa pulada ou
+    abandonada no meio (skipChallenge, sair da fase) não salva nada —
+    stopAudio() descarta a gravação em andamento nesses casos
+  - Painel do médico: novo cartão "Aprovações pendentes" na tela de
+    detalhe do paciente (openPatientDetail → renderPatientReviews),
+    antes do gráfico de progresso — lista as fases com revisão
+    "pendente", cada fonema com selo Certo/Errado/Pulado e um player de
+    áudio (via mediaBlobUrl) quando há gravação, e botões Aprovar/
+    Rejeitar (setReviewStatus) que só marcam o status/data da revisão e
+    tiram o item da lista — sem nenhum efeito colateral no progresso do
+    paciente, por decisão de escopo
+  - Sem gravação real disponível neste ambiente de teste (microfone
+    bloqueado no navegador sandboxed), a captura de áudio em si foi
+    verificada por leitura de código; o resto do fluxo (criação da
+    revisão, renderização, aprovar, rejeitar, persistência) foi testado
+    ao vivo de ponta a ponta com blobs fabricados no lugar de gravação
+    real, incluindo login real como paciente e como médico (sessão não
+    sobrevive a reload por decisão da Rodada 18, então trocar de conta
+    via localStorage + reload não é um teste válido — só handleLogin
+    de verdade seta sessionEmail)
+  - Nenhuma limpeza automática dos áudios revisados foi implementada —
+    ficam no IndexedDB indefinidamente; se o volume de armazenamento
+    virar problema no futuro, considerar apagar o blob (deleteMediaBlob)
+    quando a revisão é aprovada/rejeitada
+  - Cache-busting atualizado para style.css v=47 e script.js v=41
+
+Rodada 34 — 2026-08-29
+  - Liberação de memória (pedido explícito do usuário): aprovar ou
+    rejeitar uma revisão agora APAGA de vez os áudios daquela fase do
+    IndexedDB (nova função releaseMediaBlob, que também revoga a
+    Object URL em cache antes de deletar), em vez de deixá-los
+    acumulando pra sempre. setReviewStatus chama isso pra cada
+    tentativa com áudio antes de salvar, e zera o mediaId no registro.
+    Testado ao vivo: confirmado que os blobs somem do IndexedDB
+    (loadMediaBlob retorna null) logo depois de aprovar/rejeitar
+  - Removida a pasta boca-fonemas/ (só continha um SVG provisório da
+    tentativa de ilustração de articulação da boca, removida da tela
+    de exercício na Rodada 29 — desde então, zero referências no
+    projeto inteiro; confirmado por busca antes de apagar)
+  - Varredura de código morto (CSS/JS/HTML), com verificação manual de
+    cada candidato antes de remover — o objetivo era achar só o que
+    está PROVADAMENTE sem uso, não uma reescrita:
+    · CSS: removidas 2 regras órfãs — .flame-icon (nenhum elemento tem
+      essa classe; só existia body.reduced-motion .streak-badge
+      .flame-icon, sem nenhuma regra base pra desativar) e
+      .spinner-brand (nunca usada — setBtnLoading só cria
+      class="spinner"). NÃO removidas .leaderboard-top1/2/3, que
+      pareciam órfãs numa busca literal mas são montadas
+      dinamicamente via template literal (`leaderboard-top${i+1}`)
+      em script.js — verificação manual evitou uma remoção incorreta
+    · JS: nenhuma função sem uso encontrada — toda função declarada é
+      chamada em pelo menos um outro ponto
+    · HTML: removidos 8 atributos id="..." nunca referenciados em
+      lugar nenhum (nem por getElementById/querySelector, nem
+      dinamicamente): challenge-view, chat-btn, dd-credits,
+      path-help-btn, reminders-btn, signup-role-toggle, theme-icon
+      (o ícone de tema é atualizado por CLASSE .theme-toggle-icon,
+      que atinge os dois ícones ao mesmo tempo — o id nunca foi
+      necessário) e detail-reviews-card (id que eu mesmo adicionei na
+      Rodada 33 sem necessidade, inconsistente com os chart-cards
+      irmãos, que não têm id). NÃO removidos dropdown-profile,
+      profile-anchor, settings-anchor, que pareciam órfãos na mesma
+      busca mas são montados dinamicamente
+      (`dropdown-${which}`/`${which}-anchor` em toggleDropdown/
+      positionDropdownMenu) — mesma verificação manual antes de mexer
+  - Nada para limpar em node_modules/build cache/logs — o projeto não
+    tem nenhum desses (sem build step, sem dependências, ver seção
+    LINGUAGEM E TECNOLOGIAS). Raiz do projeto e .claude/ revisados,
+    sem arquivo temporário ou órfão sobrando
+  - Testado ao vivo após a limpeza: login, os 5 botões do cabeçalho,
+    dropdown de Configurações (tema + créditos), fluxo de exercício
+    completo (login → trilha → fase → fonema) e o fluxo de aprovação
+    do médico (aprovar/rejeitar) — tudo funcionando, sem erro novo no
+    console
+  - Cache-busting atualizado para style.css v=48 e script.js v=42

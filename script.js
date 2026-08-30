@@ -122,7 +122,8 @@ function randomFinalMessage() {
   return FINAL_MESSAGES[Math.floor(Math.random() * FINAL_MESSAGES.length)];
 }
 
-// Banco de mensagens para aproveitamento insatisfatório (< 60% de acerto).
+// Banco de mensagens para aproveitamento abaixo do limiar de conclusão
+// (ver PHASE_COMPLETION_THRESHOLD).
 const FINAL_MESSAGES_LOW = [
   "Treino encerrado! Vamos tentar outra vez para destravar esse fonema?",
   "Concluído! A sua voz está se acostumando, que tal mais uma rodada para fixar?",
@@ -140,6 +141,9 @@ let grupos = BASE_GRUPOS.map(g => ({ id: g.id, nome: g.nome, short: g.short, fon
 let desafios = [], fonemaGrupo = [], fonemaLocal = [];
 let activeCustomDicas = {};
 let activeCustomAudio = {};
+// fonema/palavra -> segundos a sustentar (exercícios do tipo "som
+// sustentado", ex.: "AAAAAAA" por 3s) — ver seção TREINO SUSTENTADO.
+let activeSustainConfig = {};
 
 function getDica(fonema) { return activeCustomDicas[fonema] || BASE_DICAS[fonema] || ""; }
 
@@ -169,7 +173,8 @@ function getUserGroups(user) {
 // Garante que o paciente tenha uma ordem de grupos definida, capturando
 // a ordem atual como ponto de partida na primeira vez.
 function ensureGroupOrder(patient) {
-  if (!patient.customContent) patient.customContent = { groups: [], exercises: [], dicas: {}, audio: {}, groupOrder: [] };
+  if (!patient.customContent) patient.customContent = { groups: [], exercises: [], dicas: {}, audio: {}, groupOrder: [], physicalExercises: [] };
+  if (!patient.customContent.physicalExercises) patient.customContent.physicalExercises = [];
   if (!patient.customContent.groupOrder || !patient.customContent.groupOrder.length) {
     patient.customContent.groupOrder = getUserGroups(patient).map(g => g.id);
   }
@@ -189,6 +194,8 @@ function setActiveContent(user) {
   const cc = (user && user.customContent) || {};
   activeCustomDicas = { ...(cc.dicas || {}) };
   activeCustomAudio = { ...(cc.audio || {}) };
+  activeSustainConfig = {};
+  (cc.exercises || []).forEach(ex => { if (ex.sustainSec) activeSustainConfig[ex.text] = ex.sustainSec; });
   rebuildDesafios();
 }
 
@@ -209,6 +216,14 @@ let phaseGroupIndex    = 0;
 let phaseStartIndex    = 0;
 let phaseEndIndex      = 0;
 let phaseSegmentStatus = []; // status por fonema da fase atual: "correct" | "incorrect" | "skipped" | null
+// Paralelo a phaseSegmentStatus: id (IndexedDB) do áudio gravado em cada
+// tentativa da fase atual, ou null se não gravou nada (pulado, sem
+// microfone) — usado só pra montar a fila de aprovação do médico
+// (ver registerPhaseReview em finishPhase).
+let phaseAttemptMediaIds = [];
+let mediaRecorder = null;
+let currentAttemptChunks = [];
+const SKIP_LIMIT_PER_PHASE = 3; // igual para todas as fases, incluindo personalizadas
 let recordingPeak       = 0;
 let recordingStartTime = 0;
 let speechOnsetTime      = null; // quando o volume cruzou o limiar pela 1ª vez nesta gravação
@@ -217,6 +232,17 @@ let matchDetected       = false;
 let recordingSilenceTimer = null;
 let recordingMaxTimer     = null;
 let recognitionActiveForTake = false; // reconhecimento real ligado e escutando nesta gravação específica
+
+// ── Treino de som sustentado (ex.: "AAAAAAA" por 3s, "TRTRTRTR") ──────
+// Modo à parte do fluxo normal de match único: em vez de comparar o texto
+// reconhecido, mede quanto tempo contínuo o volume fica acima do limiar,
+// tolerando micro-quedas (respiração, oclusiva no meio do som) sem reiniciar
+// a contagem por completo.
+let sustainTargetMs      = 0;   // 0 = fonema normal; >0 = segundos-alvo * 1000
+let sustainStreakMs      = 0;   // tempo contínuo acima do limiar nesta gravação
+let sustainGapMs         = 0;   // silêncio acumulado desde a última queda
+let sustainLastFrameTime = 0;
+const SUSTAIN_GAP_TOLERANCE_MS = 300; // um blip de silêncio de até 300ms não reinicia a contagem
 
 const MATCH_VOLUME_THRESHOLD = 0.16;
 const SILENCE_TIMEOUT_MS     = 3000;
@@ -396,6 +422,93 @@ const CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-wid
 const LOCK_SVG  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
 const MAIL_SVG  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>`;
 
+// ── Ícones próprios de tipo de mensagem (chat) — mesmo estilo de traço
+// (stroke-width 2, cantos arredondados) do resto do app, um glifo
+// dedicado por tipo para o balão de mensagem ficar reconhecível de
+// relance, sem precisar abrir a mídia para saber o que é.
+const CHAT_ICON_TEXT     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
+const CHAT_ICON_REMINDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+const CHAT_ICON_AUDIO     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>`;
+const CHAT_ICON_PHOTO     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5.5-5.5a2 2 0 0 0-2.8 0L3 20"/></svg>`;
+const CHAT_ICON_VIDEO     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="14" height="13" rx="2"/><path d="M16.5 10.5 21 7.5v9l-4.5-3"/></svg>`;
+const CHAT_ICON_SEND      = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+const CHAT_TYPE_ICON = { reminder: CHAT_ICON_REMINDER, audio: CHAT_ICON_AUDIO, photo: CHAT_ICON_PHOTO, video: CHAT_ICON_VIDEO };
+
+// ══════════════════════════════════════════════
+// ARMAZENAMENTO DE MÍDIA (IndexedDB)
+// ──────────────────────────────────────────────
+// Fotos, vídeos e áudios de chat, mais os vídeos de exercício físico
+// enviados pelo médico, são grandes demais para o localStorage (cota de
+// só alguns MB por origem — já é apertada só com fotos de perfil e
+// áudio de fonema, ver AUDIO_MAX_BYTES/AVATAR_MAX_DIM). Em vez de
+// colocar tudo em base64 no mesmo blob JSON, o binário em si fica no
+// IndexedDB (também 100% local, sem servidor, com cota bem maior) — o
+// localStorage guarda só metadados (id, tipo MIME, quem enviou, data).
+// ══════════════════════════════════════════════
+const MEDIA_DB_NAME = "vozativa_media", MEDIA_STORE = "blobs";
+let mediaDbPromise = null;
+function openMediaDb() {
+  if (mediaDbPromise) return mediaDbPromise;
+  mediaDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(MEDIA_DB_NAME, 1);
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(MEDIA_STORE)) req.result.createObjectStore(MEDIA_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return mediaDbPromise;
+}
+function saveMediaBlob(id, blob) {
+  return openMediaDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, "readwrite");
+    tx.objectStore(MEDIA_STORE).put(blob, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function loadMediaBlob(id) {
+  return openMediaDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, "readonly");
+    const req = tx.objectStore(MEDIA_STORE).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  }));
+}
+function deleteMediaBlob(id) {
+  return openMediaDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, "readwrite");
+    tx.objectStore(MEDIA_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function newMediaId() { return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 9); }
+// Object URLs criadas ficam vivas até a página fechar/recarregar — leve
+// o bastante para o volume de mídia de um app de terapia entre poucos
+// contatos, sem precisar de um controle de ciclo de vida mais elaborado.
+const mediaUrlCache = new Map();
+async function mediaBlobUrl(id) {
+  if (mediaUrlCache.has(id)) return mediaUrlCache.get(id);
+  const blob = await loadMediaBlob(id);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  mediaUrlCache.set(id, url);
+  return url;
+}
+// Libera de vez um item de mídia: revoga a Object URL em cache (se
+// alguma tela chegou a exibir/tocar) e apaga o blob do IndexedDB — usado
+// quando o conteúdo não tem mais nenhuma finalidade (ex.: áudio de
+// revisão de fase já aprovada/rejeitada pelo médico, ver
+// setReviewStatus), pra não acumular mídia indefinidamente no
+// armazenamento local.
+function releaseMediaBlob(id) {
+  if (!id) return;
+  if (mediaUrlCache.has(id)) {
+    URL.revokeObjectURL(mediaUrlCache.get(id));
+    mediaUrlCache.delete(id);
+  }
+  return deleteMediaBlob(id);
+}
+
 function val(id) { const el = document.getElementById(id); return el ? el.value : ""; }
 // Torna um elemento não-nativo (uma <div> usada como cartão/linha clicável)
 // totalmente operável por teclado: focável via Tab, anunciado como botão
@@ -434,6 +547,32 @@ function computeLevel(user) {
 }
 
 // ══════════════════════════════════════════════
+// SENHA — hash (nunca gravamos a senha em texto puro)
+// ──────────────────────────────────────────────
+// Sem backend, "criptografar e depois decifrar" a senha não protegeria
+// nada (a chave teria que morar no mesmo dispositivo do atacante). O que
+// realmente elimina o risco é nunca guardar a senha original: só um hash
+// SHA-256 com um "sal" aleatório por conta (via Web Crypto, nativo do
+// navegador). No login, comparamos hash com hash — a senha em si nunca é
+// lida de volta do localStorage.
+// ══════════════════════════════════════════════
+function generateSalt() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function hashPassword(password, salt) {
+  const data = new TextEncoder().encode(`${salt}:${password}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function verifyPassword(password, user) {
+  if (!user || !user.passwordSalt || !user.passwordHash) return false;
+  const computed = await hashPassword(password, user.passwordSalt);
+  return computed === user.passwordHash;
+}
+
+// ══════════════════════════════════════════════
 // SENHA — mostrar/ocultar
 // ══════════════════════════════════════════════
 function togglePasswordVisibility(inputId, btn) {
@@ -451,18 +590,66 @@ function togglePasswordVisibility(inputId, btn) {
 // ══════════════════════════════════════════════
 // NAVEGAÇÃO DE TELAS
 // ══════════════════════════════════════════════
+const SCREENS_BY_NAME = {
+  auth: screenAuth, home: screenHome, path: screenPath,
+  app: screenApp, doctor: screenDoctor, "account-picker": screenAccountPicker,
+};
+// Rastreado explicitamente (não "adivinhado" a partir de quem está sem
+// .hidden no DOM) — trocas rápidas em sequência (ex.: dois cliques
+// seguidos) não confundem qual tela é a "atual de verdade" na hora de
+// decidir quem deve tocar a animação de saída.
+let activeScreenName = "auth"; // reflete a tela visível por padrão no HTML estático
+
+// Troca de tela com saída animada: a tela atual toca uma animação de
+// saída (espelhando a de entrada, só mais rápida) e só recebe .hidden
+// depois que ela termina — a tela nova entra imediatamente, então a
+// transição lê como uma sequência contínua, não um corte seco.
 function showOnlyScreen(name) {
   if (currentTourKey && currentTourKey !== name) {
     document.getElementById("tour-overlay").classList.add("hidden");
     window.removeEventListener("resize", repositionTourStep);
     currentTourKey = null;
   }
-  screenAuth.classList.toggle("hidden", name !== "auth");
-  screenHome.classList.toggle("hidden", name !== "home");
-  screenPath.classList.toggle("hidden", name !== "path");
-  screenApp.classList.toggle("hidden", name !== "app");
-  screenDoctor.classList.toggle("hidden", name !== "doctor");
-  screenAccountPicker.classList.toggle("hidden", name !== "account-picker");
+  const previousName = activeScreenName;
+  activeScreenName = name;
+  const target = SCREENS_BY_NAME[name];
+  const previous = (previousName && previousName !== name) ? SCREENS_BY_NAME[previousName] : null;
+
+  // Qualquer outra tela que não seja nem a nova nem a que está de saída
+  // é escondida na hora — cobre o caso de uma troca ainda mais rápida
+  // ter deixado alguma para trás no meio do caminho.
+  Object.entries(SCREENS_BY_NAME).forEach(([key, el]) => {
+    if (!el || el === target || el === previous) return;
+    el.classList.remove("screen-exiting");
+    el.classList.add("hidden");
+  });
+
+  if (previous) {
+    if (reducedMotion) {
+      previous.classList.add("hidden");
+    } else {
+      previous.classList.add("screen-exiting");
+      const finishExit = () => {
+        previous.classList.remove("screen-exiting");
+        // Só esconde se essa tela não voltou a ficar ativa enquanto a
+        // animação rodava (troca rápida de volta pra ela mesma).
+        if (activeScreenName !== previousName) previous.classList.add("hidden");
+      };
+      previous.addEventListener("animationend", finishExit, { once: true });
+      setTimeout(finishExit, 260); // salvaguarda caso o evento não dispare
+    }
+  }
+  if (target) target.classList.remove("hidden");
+
+  // Bolinhas do fundo só "flutuam" na tela de login/cadastro — ver
+  // body.auth-active no CSS e initBlobFluidMotion no script.js.
+  document.body.classList.toggle("auth-active", name === "auth");
+  updateBlobMotionState();
+  // Cursor de "arrastar pra rolar" na trilha e no painel do médico —
+  // fica em <html> (document.documentElement), que é quem de fato rola
+  // a página (document.scrollingElement), não <body>.
+  document.documentElement.classList.toggle("path-active", name === "path");
+  document.documentElement.classList.toggle("doctor-active", name === "doctor");
 }
 
 // A busca da tela inicial some assim que a busca é concluída (resultado
@@ -510,7 +697,24 @@ function toggleDropdown(which) {
   closeDropdowns();
   clearHomeSearch();
   activeDropdown = which;
-  document.getElementById(`dropdown-${which}`).classList.remove("hidden");
+  const menu = document.getElementById(`dropdown-${which}`);
+  const anchor = document.getElementById(`${which}-anchor`);
+  menu.classList.remove("hidden");
+  if (anchor) positionDropdownMenu(menu, anchor);
+}
+
+// O menu usa position:fixed (ver .dropdown-menu no CSS) — calcula aqui a
+// posição real a partir do botão que abriu, em vez de confiar em
+// position:absolute relativo a um ancestral, que ficava cortado pela
+// rolagem horizontal do cabeçalho da Home (.home-top { overflow-x: auto }).
+function positionDropdownMenu(menu, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const menuWidth = Math.max(menu.offsetWidth, 220);
+  let left = r.left;
+  if (left + menuWidth > window.innerWidth - 12) left = r.right - menuWidth;
+  if (left < 12) left = 12;
+  menu.style.left = left + "px";
+  menu.style.top = (r.bottom + 12) + "px";
 }
 
 function closeDropdowns() {
@@ -665,6 +869,64 @@ async function handleAvatarChange(event) {
     const user = users[sessionEmail];
     if (user) { user.avatar = dataUrl; saveUserRecords({ [sessionEmail]: user }); }
   }
+  // Envio de foto agora é uma das opções dentro do mesmo painel de
+  // "Foto de perfil" (junto com os ícones) — fecha ao concluir, igual
+  // ao clicar num ícone predefinido (selectPresetAvatar).
+  closePanel("avatar-picker-panel");
+}
+
+// ══════════════════════════════════════════════
+// ÍCONES DE PERFIL PREDEFINIDOS
+// ──────────────────────────────────────────────
+// Lista de arquivos esperados dentro da pasta avatares/ — os 8 abaixo
+// já existem (exemplos funcionais, validam a estrutura de ponta a
+// ponta); para adicionar mais depois, basta soltar o arquivo em
+// avatares/ e incluir o nome aqui. Guardado como CAMINHO (não base64,
+// diferente da foto enviada pelo usuário) — bem mais leve no
+// localStorage, e todo lugar que já exibe user.avatar via <img src>
+// funciona sem nenhuma mudança.
+// ══════════════════════════════════════════════
+const PRESET_AVATARS = [
+  "avatares/avatar-01.svg", "avatares/avatar-02.svg", "avatares/avatar-03.svg", "avatares/avatar-04.svg",
+  "avatares/avatar-05.svg", "avatares/avatar-06.svg", "avatares/avatar-07.svg", "avatares/avatar-08.svg",
+];
+
+function openAvatarPicker() {
+  const grid = document.getElementById("avatar-picker-grid");
+  const users = getUsers();
+  const user = sessionEmail ? users[sessionEmail] : null;
+  const current = user ? user.avatar : null;
+  grid.innerHTML = "";
+
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "avatar-picker-option avatar-picker-clear";
+  clearBtn.setAttribute("aria-label", "Usar ícone padrão (sem foto nem ícone escolhido)");
+  clearBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  clearBtn.onclick = () => selectPresetAvatar(null);
+  grid.appendChild(clearBtn);
+
+  PRESET_AVATARS.forEach(path => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "avatar-picker-option" + (current === path ? " selected" : "");
+    btn.setAttribute("aria-label", "Usar este ícone como foto de perfil");
+    btn.innerHTML = `<img src="${path}" alt=""/>`;
+    btn.onclick = () => selectPresetAvatar(path);
+    grid.appendChild(btn);
+  });
+
+  openPanel("avatar-picker-panel");
+}
+
+function selectPresetAvatar(path) {
+  setAvatarUI(path);
+  if (sessionEmail) {
+    const users = getUsers();
+    const user = users[sessionEmail];
+    if (user) { user.avatar = path; saveUserRecords({ [sessionEmail]: user }); }
+  }
+  closePanel("avatar-picker-panel");
 }
 
 // ── Editar perfil ─────────────────────────────
@@ -751,6 +1013,15 @@ function saveProfile() {
   closePanel("profile-panel");
 }
 
+// Ativa a barra de rolagem (altura fixa) só quando a lista realmente
+// passa de 4 itens — conta os itens de verdade renderizados, em vez de
+// estimar por altura em CSS (mais preciso: até 4 itens, nunca aparece
+// nenhuma barra, nem cinza/fantasma).
+function applyListScrollCap(listEl, threshold) {
+  if (!listEl) return;
+  listEl.classList.toggle("scroll-capped", listEl.children.length > (threshold || 4));
+}
+
 // ── Trocar de conta ───────────────────────────
 function renderAccounts() {
   const list = document.getElementById("accounts-list");
@@ -798,6 +1069,7 @@ function renderAccounts() {
     empty.innerHTML = "Nenhuma outra conta logada ainda.<br>Adicione uma conta abaixo.";
     list.appendChild(empty);
   }
+  applyListScrollCap(list);
 }
 
 function switchAccount(email) {
@@ -834,13 +1106,13 @@ function showAccountsList() {
   listView.classList.remove("hidden");
   focusFirstIn(listView);
 }
-function handleAccountsSwitchLogin(e) {
+async function handleAccountsSwitchLogin(e) {
   e.preventDefault();
   hideAuthError("accounts-switch-error");
   const users = getUsers();
   const user = users[accountSwitchTargetEmail];
   const pass = val("accounts-switch-password");
-  if (!user || user.password !== pass) {
+  if (!user || !(await verifyPassword(pass, user))) {
     showAuthError("accounts-switch-error", "Senha incorreta.");
     return;
   }
@@ -957,6 +1229,7 @@ function renderAccountPickerList() {
       </div>`;
     list.appendChild(item);
   });
+  applyListScrollCap(list);
 }
 function selectAccountForPicker(email) {
   const users = getUsers();
@@ -979,13 +1252,13 @@ function goToFreshLogin() {
   showOnlyScreen("auth");
   switchAuthTab("login");
 }
-function handleAccountPickerLogin(e) {
+async function handleAccountPickerLogin(e) {
   e.preventDefault();
   hideAuthError("account-picker-error");
   const users = getUsers();
   const user = users[accountPickerEmail];
   const pass = val("account-picker-password");
-  if (!user || user.password !== pass) {
+  if (!user || !(await verifyPassword(pass, user))) {
     showAuthError("account-picker-error", "Senha incorreta.");
     return;
   }
@@ -1057,6 +1330,21 @@ function saveUserRecords(records) {
 // recentes, em vez de continuar mostrando um estado desatualizado ou
 // arriscar sobrescrevê-lo com uma gravação baseada em dados velhos.
 window.addEventListener("storage", (e) => {
+  if (e.key === "vozativa_chats") {
+    if (!sessionEmail) return;
+    const users = getUsers();
+    const me = users[sessionEmail];
+    if (!me) return;
+    updateChatBadge(me);
+    updateRemindersBadge(me);
+    if (!document.getElementById("chat-list-panel").classList.contains("hidden")) renderChatList();
+    if (!document.getElementById("chat-thread-panel").classList.contains("hidden") && activeChatContact) {
+      markConversationRead(chatConversationId(sessionEmail, activeChatContact), sessionEmail);
+      renderChatThread();
+    }
+    if (!document.getElementById("reminders-panel").classList.contains("hidden")) renderRemindersPanel();
+    return;
+  }
   if (e.key !== "vozativa_users" && e.key !== "vozativa_session_email") return;
   if (!sessionEmail) return;
   const users = getUsers();
@@ -1074,6 +1362,9 @@ function getProgress(user) {
   if (!user.progress.attempts) user.progress.attempts = {};
   if (!user.progress.streak) user.progress.streak = 0;
   if (!user.progress.lastTrainedDate) user.progress.lastTrainedDate = null;
+  // Fila de aprovação do médico (ver registerPhaseReview) — uma entrada
+  // por fase concluída, com as tentativas gravadas daquela fase.
+  if (!user.progress.reviews) user.progress.reviews = [];
   return user.progress;
 }
 
@@ -1136,8 +1427,12 @@ function switchAuthTab(tab) {
   const isLogin = tab === "login";
   document.getElementById("tab-login").classList.toggle("active", isLogin);
   document.getElementById("tab-signup").classList.toggle("active", !isLogin);
-  document.getElementById("login-form").classList.toggle("hidden", !isLogin);
-  document.getElementById("signup-form").classList.toggle("hidden", isLogin);
+  // Os dois formulários ficam empilhados na mesma célula de grid (ver
+  // .auth-forms-stack no CSS) e alternam por visibility, não display —
+  // assim o card sempre reserva a altura do MAIOR dos dois, e trocar de
+  // aba nunca muda a altura total nem recentraliza o logo acima dele.
+  document.getElementById("login-form").classList.toggle("auth-form-inactive", !isLogin);
+  document.getElementById("signup-form").classList.toggle("auth-form-inactive", isLogin);
   hideAuthError("login-error");
   hideAuthError("signup-error");
 }
@@ -1171,14 +1466,14 @@ function formatCrmInput(e) {
   e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);
 }
 
-function handleLogin(e) {
+async function handleLogin(e) {
   e.preventDefault();
   hideAuthError("login-error");
   const email = val("login-email").trim().toLowerCase();
   const pass  = val("login-password");
   const users = getUsers();
   const user  = users[email];
-  if (!user || user.password !== pass) {
+  if (!user || !(await verifyPassword(pass, user))) {
     showAuthError("login-error", "E-mail ou senha incorretos.");
     return;
   }
@@ -1191,7 +1486,7 @@ function handleLogin(e) {
   maybeStartHomeTour();
 }
 
-function handleSignup(e) {
+async function handleSignup(e) {
   e.preventDefault();
   hideAuthError("signup-error");
   const name   = val("signup-name").trim();
@@ -1215,8 +1510,12 @@ function handleSignup(e) {
   if (users[email]) { showAuthError("signup-error", "Já existe uma conta com este e-mail."); return; }
 
   // Cada conta começa 100% em branco — nenhum campo herda valor de outra conta.
+  // A senha nunca é gravada em texto puro — só o hash + sal (ver seção
+  // "SENHA — hash" acima).
+  const passwordSalt = generateSalt();
+  const passwordHash = await hashPassword(pass, passwordSalt);
   const base = {
-    name, email, password: pass, phone, avatar: null, bio: "",
+    name, email, passwordHash, passwordSalt, phone, avatar: null, bio: "",
     role: signupRole, progress: { completedGroupIds: [], attempts: {} },
     accountId: generateAccountId(users), welcomeSeen: false,
   };
@@ -1231,7 +1530,7 @@ function handleSignup(e) {
     base.friends = [];
     base.friendRequestsSent = [];
     base.friendRequestsReceived = [];
-    base.customContent = { groups: [], exercises: [], dicas: {}, audio: {}, groupOrder: [] };
+    base.customContent = { groups: [], exercises: [], dicas: {}, audio: {}, groupOrder: [], physicalExercises: [] };
   }
 
   saveUserRecords({ [email]: base });
@@ -1259,15 +1558,27 @@ function applyUserToUI(user) {
 
   setActiveContent(user.role === "paciente" ? user : null);
   updateFriendsBadge(user.role === "paciente" ? user : null);
+  updateChatBadge(user);
+  updateRemindersBadge(user);
 
   const greeting = document.getElementById("home-greeting");
   if (greeting) greeting.textContent = user.name ? `Olá, ${user.name.split(" ")[0]}!` : "";
+
+  // Nome ao lado do ícone de perfil no cabeçalho — mesmo padrão em toda
+  // tela onde esse ícone aparece (hoje, a tela inicial).
+  const profileBtnName = document.getElementById("profile-btn-name");
+  const profileBtn = document.getElementById("profile-btn");
+  const firstName = user.name ? user.name.split(" ")[0] : "";
+  if (profileBtnName) profileBtnName.textContent = firstName;
+  if (profileBtn) profileBtn.setAttribute("aria-label", firstName ? `Perfil de ${firstName}` : "Perfil");
 
   const isDoctor = user.role === "medico";
   const patientsBtn = document.getElementById("patients-btn");
   if (patientsBtn) patientsBtn.classList.toggle("hidden", !isDoctor);
   const friendsBtn = document.getElementById("friends-btn");
   if (friendsBtn) friendsBtn.classList.toggle("hidden", isDoctor);
+  const physicalExBtn = document.getElementById("physical-exercises-btn");
+  if (physicalExBtn) physicalExBtn.classList.toggle("hidden", isDoctor);
 
   const startBtn = document.getElementById("home-start-btn");
   if (startBtn) {
@@ -1300,9 +1611,31 @@ function updateStreakBadge(user) {
   if (!badge) return;
   const streak = user ? getProgress(user).streak : 0;
   badge.classList.toggle("hidden", !streak);
-  if (!streak) return;
-  document.getElementById("streak-count").textContent = streak;
-  document.getElementById("streak-label").textContent = streak === 1 ? "dia seguido" : "dias seguidos";
+  if (streak) {
+    document.getElementById("streak-count").textContent = streak;
+    document.getElementById("streak-label").textContent = streak === 1 ? "dia seguido" : "dias seguidos";
+  }
+  updateDailyGoalBadge(user);
+}
+
+// Objetivo diário — mecânica NOVA (não existia antes do redesign):
+// diz, sem culpa nem alarme, se o treino de hoje já aconteceu. Reaproveita
+// o mesmo dado que já sustenta a sequência (progress.lastTrainedDate), sem
+// precisar de nenhum rastreamento novo. Decisão deliberada de manter o tom
+// sempre positivo mesmo no estado "pendente" ("Ainda dá tempo!", nunca
+// "Você ainda não treinou hoje ⚠") — objetivo diário deve convidar, não
+// cobrar; castigar quem abre o app sem ainda ter treinado é o tipo de
+// mecânica agressiva que o projeto decidiu não ter.
+function updateDailyGoalBadge(user) {
+  const el = document.getElementById("daily-goal-badge");
+  if (!el) return;
+  if (!user) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  const done = getProgress(user).lastTrainedDate === todayDateString();
+  el.classList.toggle("done", done);
+  el.querySelector(".daily-goal-text").textContent = done
+    ? "Meta de hoje cumprida!"
+    : "Ainda dá tempo de treinar hoje";
 }
 
 // Muda toda vez que a tela inicial é exibida (médico mantém uma frase fixa).
@@ -1317,17 +1650,13 @@ function updateHomeTagline() {
     : randomHomeTagline();
 }
 
+// A tela de Entrar/Criar conta é sempre a primeira exibida ao abrir o
+// app — mesmo havendo uma sessão salva de uma visita anterior, ela não
+// é mais usada para pular direto pra tela inicial. Os dados da sessão
+// salva continuam intactos no localStorage (nada foi apagado), só
+// deixaram de ser usados para saltar a tela de autenticação no boot.
 function initAuthUI() {
-  const savedEmail = localStorage.getItem("vozativa_session_email");
-  const users = getUsers();
-  if (savedEmail && users[savedEmail]) {
-    sessionEmail = savedEmail;
-    applyUserToUI(users[savedEmail]);
-    showOnlyScreen("home");
-    maybeStartHomeTour();
-  } else {
-    showOnlyScreen("auth");
-  }
+  showOnlyScreen("auth");
 }
 
 // ══════════════════════════════════════════════
@@ -1383,6 +1712,9 @@ function renderHomeSearchResults() {
       if (!isFriend && !isPending) {
         row.querySelector(".search-result-add-btn").onclick = (e) => { e.stopPropagation(); sendFriendRequest(p.email); clearHomeSearch(); };
       }
+      row.onclick = () => openPublicProfile(p.email);
+      row.setAttribute("aria-label", `Ver perfil de ${p.name}`);
+      makeKeyboardClickable(row);
       wrap.appendChild(row);
     });
   }
@@ -1408,6 +1740,55 @@ function sendFriendRequest(toEmail) {
   saveUserRecords({ [sessionEmail]: me, [toEmail]: other });
   playBeep(660, 0.1);
   renderHomeSearchResults();
+}
+
+// ══════════════════════════════════════════════
+// PERFIL PÚBLICO — aberto ao clicar num resultado de busca (nunca
+// mostra e-mail, telefone ou qualquer outro dado privado, só o que é
+// necessário pra decidir se quer adicionar como amigo).
+// ══════════════════════════════════════════════
+function publicProfileActionState(me, p) {
+  const isFriend = (me.friends || []).includes(p.email);
+  const isPending = (me.friendRequestsSent || []).includes(p.email);
+  if (isFriend) return { label: "Já são amigos", disabled: true };
+  if (isPending) return { label: "Solicitação enviada", disabled: true };
+  return { label: "Adicionar como amigo", disabled: false };
+}
+function openPublicProfile(email) {
+  const users = getUsers();
+  const me = users[sessionEmail];
+  const p = users[email];
+  if (!me || !p || email === sessionEmail) return;
+
+  document.getElementById("public-profile-avatar").innerHTML = p.avatar ? `<img src="${p.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG;
+  document.getElementById("public-profile-name").textContent = p.name;
+  document.getElementById("public-profile-id").textContent = p.accountId || "—";
+  document.getElementById("public-profile-level").textContent = levelLabel(computeLevel(p));
+  const roleBadge = document.getElementById("public-profile-role");
+  roleBadge.textContent = p.role === "medico" ? "Fonoaudiólogo(a)" : "Paciente";
+  roleBadge.classList.toggle("role-badge-doctor", p.role === "medico");
+
+  const actionBtn = document.getElementById("public-profile-action-btn");
+  if (p.role === "medico") {
+    // Perfil de médico encontrado pela busca (não deveria acontecer no
+    // fluxo normal de paciente, mas por segurança não oferece "amizade"
+    // a uma conta que não é de paciente).
+    actionBtn.classList.add("hidden");
+  } else {
+    actionBtn.classList.remove("hidden");
+    const state = publicProfileActionState(me, p);
+    actionBtn.textContent = state.label;
+    actionBtn.disabled = state.disabled;
+    actionBtn.onclick = () => {
+      sendFriendRequest(email);
+      const refreshed = publicProfileActionState(getUsers()[sessionEmail], users[email]);
+      actionBtn.textContent = refreshed.label;
+      actionBtn.disabled = refreshed.disabled;
+      renderFriendsPanel();
+      renderFriendsAddResults();
+    };
+  }
+  openPanel("public-profile-panel");
 }
 
 function respondFriendRequest(fromEmail, accept) {
@@ -1494,7 +1875,76 @@ function showToast(message) {
 function openFriendsPanel() {
   clearHomeSearch();
   renderFriendsPanel();
+  closeFriendsAddSection();
   openPanel("friends-panel");
+}
+
+// Busca e adição de amigos direto da aba Amigos (botão "+" no
+// cabeçalho) — mesma lógica de busca por nome/ID já usada na tela
+// inicial, sem precisar sair do painel.
+function toggleFriendsAddSection() {
+  const section = document.getElementById("friends-add-section");
+  const btn = document.getElementById("friends-add-toggle-btn");
+  const isOpen = !section.classList.contains("hidden");
+  if (isOpen) { closeFriendsAddSection(); return; }
+  section.classList.remove("hidden");
+  btn.classList.add("active");
+  btn.setAttribute("aria-expanded", "true");
+  const input = document.getElementById("friends-add-input");
+  if (input) { input.value = ""; input.focus(); }
+  document.getElementById("friends-add-results").classList.add("hidden");
+}
+function closeFriendsAddSection() {
+  const section = document.getElementById("friends-add-section");
+  const btn = document.getElementById("friends-add-toggle-btn");
+  if (!section) return;
+  section.classList.add("hidden");
+  btn.classList.remove("active");
+  btn.setAttribute("aria-expanded", "false");
+}
+function renderFriendsAddResults() {
+  const input = document.getElementById("friends-add-input");
+  const wrap = document.getElementById("friends-add-results");
+  if (!input || !wrap || !sessionEmail) return;
+  const query = input.value.trim().toLowerCase();
+  wrap.innerHTML = "";
+  if (!query) { wrap.classList.add("hidden"); return; }
+
+  const users = getUsers();
+  const me = users[sessionEmail];
+  if (!me) return;
+  wrap.classList.remove("hidden");
+
+  const matches = Object.values(users)
+    .filter(u => u.role === "paciente" && u.email !== sessionEmail)
+    .filter(p => p.name.toLowerCase().includes(query) || (p.accountId || "").includes(query))
+    .slice(0, 8);
+  if (!matches.length) {
+    wrap.innerHTML = `<div class="search-no-results">Nenhum resultado encontrado para "${escapeHtml(input.value.trim())}".</div>`;
+    return;
+  }
+  matches.forEach(p => {
+    const isFriend = (me.friends || []).includes(p.email);
+    const isPending = (me.friendRequestsSent || []).includes(p.email);
+    const row = document.createElement("div");
+    row.className = "search-result-row";
+    row.innerHTML = `
+      <div class="patient-card-avatar">${p.avatar ? `<img src="${p.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG}</div>
+      <div class="patient-card-info"><span class="patient-card-name">${escapeHtml(p.name)}</span><span class="patient-card-meta">ID ${escapeHtml(p.accountId)}</span></div>
+      <button type="button" class="search-result-add-btn"${isFriend || isPending ? " disabled" : ""}>${isFriend ? "Amigo" : isPending ? "Pendente" : "Adicionar"}</button>`;
+    if (!isFriend && !isPending) {
+      row.querySelector(".search-result-add-btn").onclick = (e) => {
+        e.stopPropagation();
+        sendFriendRequest(p.email);
+        renderFriendsAddResults();
+        renderFriendsPanel();
+      };
+    }
+    row.onclick = () => openPublicProfile(p.email);
+    row.setAttribute("aria-label", `Ver perfil de ${p.name}`);
+    makeKeyboardClickable(row);
+    wrap.appendChild(row);
+  });
 }
 
 function friendPreviewCard(p, metaText, extraHtml) {
@@ -1534,6 +1984,7 @@ function renderFriendsPanel() {
       card.querySelector(".friend-req-deny").onclick = () => respondFriendRequest(r.fromEmail, false);
       receivedWrap.appendChild(card);
     });
+    applyListScrollCap(receivedWrap);
   } else {
     receivedSection.classList.add("hidden");
   }
@@ -1551,6 +2002,7 @@ function renderFriendsPanel() {
         `<span class="invite-sent-icon" title="Pedido enviado, aguardando resposta">${MAIL_SVG}</span>`);
       sentWrap.appendChild(card);
     });
+    applyListScrollCap(sentWrap);
   } else {
     sentSection.classList.add("hidden");
   }
@@ -1573,6 +2025,7 @@ function renderFriendsPanel() {
       friendsWrap.appendChild(card);
     });
   }
+  applyListScrollCap(friendsWrap);
 
   updateFriendsBadge(me);
 }
@@ -1595,7 +2048,10 @@ function renderLeaderboard() {
     const u = users[email];
     const stats = computePatientStats(u);
     return { email, name: u.name, avatar: u.avatar, groupsDone: stats.groupsDone, accuracyPct: stats.accuracyPct };
-  }).sort((a, b) => b.groupsDone - a.groupsDone || b.accuracyPct - a.accuracyPct);
+    // Ranking por desempenho real (% de acerto), não por volume de fases
+    // concluídas — evita que alguém suba no ranking só por "correr" pela
+    // trilha sem acertar; fases concluídas entra como desempate.
+  }).sort((a, b) => b.accuracyPct - a.accuracyPct || b.groupsDone - a.groupsDone);
 
   const wrap = document.getElementById("leaderboard-list");
   wrap.innerHTML = "";
@@ -1611,6 +2067,399 @@ function renderLeaderboard() {
       </div>`;
     wrap.appendChild(row);
   });
+}
+
+// ══════════════════════════════════════════════
+// CHAT (mensagens entre contas vinculadas)
+// ──────────────────────────────────────────────
+// Funciona entre TODAS as contas com vínculo confirmado: amigos
+// (paciente↔paciente) e médico↔paciente vinculados — nunca com uma
+// conta sem relação nenhuma. Como o app não tem backend, a conversa só
+// existe de fato entre contas salvas NESTE MESMO dispositivo/navegador
+// (mesma limitação que já vale pra contas em geral — ver "Trocar de
+// conta"); o modelo de dados já fica pronto para um backend futuro.
+// Tipos de mensagem: texto, lembrete, áudio (gravado na hora via
+// MediaRecorder), foto e vídeo — mídia grande fica no IndexedDB (ver
+// ARMAZENAMENTO DE MÍDIA), só a referência entra no localStorage.
+// ══════════════════════════════════════════════
+function chatConversationId(a, b) { return [a, b].sort().join("::"); }
+
+function getChats() {
+  try { return JSON.parse(localStorage.getItem("vozativa_chats")) || {}; }
+  catch (e) { return {}; }
+}
+// Merge-safe como saveUserRecords(): relê o localStorage antes de
+// gravar, então uma mensagem enviada em outra aba entre a leitura e
+// esta gravação não é apagada por engano.
+function saveChatMessage(conversationId, message) {
+  const chats = getChats();
+  if (!chats[conversationId]) chats[conversationId] = { messages: [] };
+  chats[conversationId].messages.push(message);
+  try { localStorage.setItem("vozativa_chats", JSON.stringify(chats)); return true; }
+  catch (e) { showToast("Não foi possível enviar: armazenamento do dispositivo está cheio."); return false; }
+}
+function markConversationRead(conversationId, myEmail) {
+  const chats = getChats();
+  const conv = chats[conversationId];
+  if (!conv) return;
+  let changed = false;
+  conv.messages.forEach(m => {
+    if (m.from !== myEmail && !m.readBy.includes(myEmail)) { m.readBy.push(myEmail); changed = true; }
+  });
+  if (changed) localStorage.setItem("vozativa_chats", JSON.stringify(chats));
+}
+
+// Contatos válidos: para paciente, amigos + médicos vinculados; para
+// médico, pacientes vinculados. Nunca uma conta sem vínculo confirmado.
+function getChatContacts(user) {
+  const users = getUsers();
+  const emails = user.role === "medico" ? [...(user.patients || [])] : [...(user.friends || []), ...(user.linkedDoctors || [])];
+  return emails.map(e => users[e]).filter(Boolean);
+}
+function chatUnreadCountFor(myEmail, contactEmail) {
+  const conv = getChats()[chatConversationId(myEmail, contactEmail)];
+  if (!conv) return 0;
+  return conv.messages.filter(m => m.from === contactEmail && !m.readBy.includes(myEmail)).length;
+}
+function updateChatBadge(user) {
+  const dot = document.getElementById("chat-badge-dot");
+  if (!dot) return;
+  if (!user) { dot.classList.add("hidden"); return; }
+  const hasUnread = getChatContacts(user).some(c => chatUnreadCountFor(user.email, c.email) > 0);
+  dot.classList.toggle("hidden", !hasUnread);
+}
+
+function openChatListPanel() {
+  renderChatList();
+  openPanel("chat-list-panel");
+}
+function renderChatList() {
+  const wrap = document.getElementById("chat-contacts-list");
+  if (!wrap || !sessionEmail) return;
+  wrap.innerHTML = "";
+  const users = getUsers();
+  const me = users[sessionEmail];
+  if (!me) return;
+  const contacts = getChatContacts(me);
+  if (!contacts.length) {
+    wrap.innerHTML = `<div class="accounts-empty">${me.role === "medico" ? "Nenhum paciente vinculado ainda." : "Adicione amigos ou vincule um fonoaudiólogo para poder conversar."}</div>`;
+    return;
+  }
+  const chats = getChats();
+  const withPreview = contacts.map(c => {
+    const conv = chats[chatConversationId(sessionEmail, c.email)];
+    const last = conv && conv.messages.length ? conv.messages[conv.messages.length - 1] : null;
+    return { c, last, unread: chatUnreadCountFor(sessionEmail, c.email) };
+  }).sort((a, b) => (b.last ? b.last.createdAt : 0) - (a.last ? a.last.createdAt : 0));
+
+  withPreview.forEach(({ c, last, unread }) => {
+    const row = document.createElement("div");
+    row.className = "chat-contact-row";
+    row.setAttribute("aria-label", `Conversar com ${c.name}`);
+    makeKeyboardClickable(row);
+    const previewText = !last ? "Nenhuma mensagem ainda"
+      : last.type === "text" ? escapeHtml(last.text)
+      : last.type === "reminder" ? "🔔 " + escapeHtml(last.text)
+      : last.type === "audio" ? "Mensagem de voz"
+      : last.type === "photo" ? "Foto"
+      : "Vídeo";
+    row.innerHTML = `
+      <div class="account-avatar">${c.avatar ? `<img src="${c.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG}</div>
+      <div class="chat-contact-info">
+        <span class="chat-contact-name">${escapeHtml(c.name)} ${c.role === "medico" ? "🩺" : ""}</span>
+        <span class="chat-contact-preview">${previewText}</span>
+      </div>
+      ${unread ? `<span class="chat-unread-count">${unread}</span>` : ""}`;
+    row.onclick = () => openChatThread(c.email);
+    wrap.appendChild(row);
+  });
+}
+
+// ── Thread (conversa aberta) ──
+let activeChatContact = null;
+function openChatThread(contactEmail) {
+  const users = getUsers();
+  const contact = users[contactEmail];
+  const me = sessionEmail ? users[sessionEmail] : null;
+  if (!contact || !me) return;
+  activeChatContact = contactEmail;
+  document.getElementById("chat-thread-avatar").innerHTML = contact.avatar ? `<img src="${contact.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG;
+  document.getElementById("chat-thread-name").textContent = contact.name;
+  markConversationRead(chatConversationId(sessionEmail, contactEmail), sessionEmail);
+  renderChatThread();
+  updateChatBadge(me);
+  closePanel("chat-list-panel");
+  openPanel("chat-thread-panel");
+}
+function backToChatList() {
+  activeChatContact = null;
+  closePanel("chat-thread-panel");
+  openChatListPanel();
+}
+
+function chatBubbleContent(m) {
+  if (m.type === "text") return `<p class="chat-msg-text">${escapeHtml(m.text)}</p>`;
+  if (m.type === "reminder") return `<div class="chat-msg-reminder">${CHAT_ICON_REMINDER}<p class="chat-msg-text">${escapeHtml(m.text)}</p></div>${m.done ? '<span class="chat-msg-reminder-done">Marcado como feito ✓</span>' : ""}`;
+  if (m.type === "audio") return `<div class="chat-msg-audio">${CHAT_ICON_AUDIO}<audio class="chat-audio-el" controls preload="none"></audio></div>`;
+  if (m.type === "photo") return `<div class="chat-msg-media"><img class="chat-msg-photo" alt="Foto enviada"/></div>`;
+  if (m.type === "video") return `<div class="chat-msg-media"><video class="chat-msg-video" controls></video></div>`;
+  return "";
+}
+async function hydrateChatBubbleMedia(bubbleEl, m) {
+  if (m.type !== "photo" && m.type !== "video" && m.type !== "audio") return;
+  const url = await mediaBlobUrl(m.mediaId);
+  if (!url) return;
+  if (m.type === "photo") { const img = bubbleEl.querySelector(".chat-msg-photo"); if (img) img.src = url; }
+  if (m.type === "video") { const vid = bubbleEl.querySelector(".chat-msg-video"); if (vid) vid.src = url; }
+  if (m.type === "audio") { const audioEl = bubbleEl.querySelector(".chat-audio-el"); if (audioEl) audioEl.src = url; }
+}
+function renderChatThread() {
+  const wrap = document.getElementById("chat-thread-messages");
+  if (!wrap || !activeChatContact) return;
+  wrap.innerHTML = "";
+  const conv = getChats()[chatConversationId(sessionEmail, activeChatContact)];
+  const messages = (conv && conv.messages) || [];
+  if (!messages.length) {
+    wrap.innerHTML = `<div class="accounts-empty">Nenhuma mensagem ainda. Diga oi!</div>`;
+    return;
+  }
+  messages.forEach(m => {
+    const isMine = m.from === sessionEmail;
+    const bubbleRow = document.createElement("div");
+    bubbleRow.className = "chat-bubble-row " + (isMine ? "mine" : "theirs");
+    bubbleRow.innerHTML = `<div class="chat-bubble${m.type !== "text" ? " chat-bubble-media-type" : ""}">${chatBubbleContent(m)}<span class="chat-bubble-time">${new Date(m.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span></div>`;
+    wrap.appendChild(bubbleRow);
+    hydrateChatBubbleMedia(bubbleRow, m);
+  });
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function sendChatText() {
+  const input = document.getElementById("chat-text-input");
+  const text = input.value.trim();
+  if (!text || !activeChatContact || !sessionEmail) return;
+  const message = { id: newMediaId(), from: sessionEmail, type: "text", text, createdAt: Date.now(), readBy: [sessionEmail] };
+  if (!saveChatMessage(chatConversationId(sessionEmail, activeChatContact), message)) return;
+  input.value = "";
+  renderChatThread();
+  playBeep(560, 0.08);
+}
+// ── Lembretes — aba própria na Home, limitada a 1 por dia por conversa ──
+// Um lembrete continua contando no envio até o dia seguinte mesmo depois
+// de marcado como feito (o limite é sobre TER SIDO ENVIADO hoje, não
+// sobre estar pendente) — evita reenviar o mesmo lembrete 5x no mesmo dia
+// só porque a pessoa já marcou "feito" na primeira vez.
+function dateStringFor(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function reminderSentToday(myEmail, contactEmail) {
+  const conv = getChats()[chatConversationId(myEmail, contactEmail)];
+  if (!conv) return false;
+  const today = todayDateString();
+  return conv.messages.some(m => m.type === "reminder" && m.from === myEmail && dateStringFor(m.createdAt) === today);
+}
+function openChatReminderPrompt() {
+  if (!activeChatContact || !sessionEmail) return;
+  if (reminderSentToday(sessionEmail, activeChatContact)) {
+    showToast("Você já enviou um lembrete para essa pessoa hoje — tente de novo amanhã.");
+    return;
+  }
+  document.getElementById("chat-reminder-input").value = "";
+  openModal("chat-reminder-modal");
+}
+function sendChatReminder() {
+  const text = document.getElementById("chat-reminder-input").value.trim();
+  if (!text || !activeChatContact || !sessionEmail) return;
+  if (reminderSentToday(sessionEmail, activeChatContact)) {
+    closeModal("chat-reminder-modal");
+    showToast("Você já enviou um lembrete para essa pessoa hoje — tente de novo amanhã.");
+    return;
+  }
+  const message = { id: newMediaId(), from: sessionEmail, type: "reminder", text, done: false, createdAt: Date.now(), readBy: [sessionEmail] };
+  saveChatMessage(chatConversationId(sessionEmail, activeChatContact), message);
+  closeModal("chat-reminder-modal");
+  renderChatThread();
+  updateRemindersBadge(getUsers()[sessionEmail]);
+  playBeep(560, 0.08);
+}
+
+// Todos os lembretes RECEBIDOS pelo usuário atual, em qualquer conversa,
+// que ainda não foram marcados como feitos — é o que popula a aba
+// "Lembretes" na tela inicial.
+function getAllPendingReminders(myEmail) {
+  const chats = getChats();
+  const out = [];
+  Object.keys(chats).forEach(convId => {
+    const [a, b] = convId.split("::");
+    if (a !== myEmail && b !== myEmail) return;
+    const contactEmail = a === myEmail ? b : a;
+    (chats[convId].messages || []).forEach(m => {
+      if (m.type === "reminder" && m.from === contactEmail && !m.done) out.push({ ...m, contactEmail });
+    });
+  });
+  return out.sort((a, b) => b.createdAt - a.createdAt);
+}
+function updateRemindersBadge(user) {
+  const dot = document.getElementById("reminders-badge-dot");
+  if (!dot) return;
+  const hasPending = !!(user && getAllPendingReminders(user.email).length);
+  dot.classList.toggle("hidden", !hasPending);
+}
+function markReminderDone(contactEmail, messageId) {
+  if (!sessionEmail) return;
+  const chats = getChats();
+  const convId = chatConversationId(sessionEmail, contactEmail);
+  const conv = chats[convId];
+  const msg = conv && conv.messages.find(m => m.id === messageId);
+  if (!msg) return;
+  msg.done = true;
+  msg.doneAt = Date.now();
+  localStorage.setItem("vozativa_chats", JSON.stringify(chats));
+  renderRemindersPanel();
+  updateRemindersBadge(getUsers()[sessionEmail]);
+  if (!document.getElementById("chat-thread-panel").classList.contains("hidden") && activeChatContact === contactEmail) renderChatThread();
+  playBeep(660, 0.1);
+}
+function openRemindersPanel() {
+  renderRemindersPanel();
+  openPanel("reminders-panel");
+}
+function renderRemindersPanel() {
+  const wrap = document.getElementById("reminders-list");
+  if (!wrap || !sessionEmail) return;
+  wrap.innerHTML = "";
+  const users = getUsers();
+  const pending = getAllPendingReminders(sessionEmail);
+  if (!pending.length) {
+    wrap.innerHTML = `<div class="accounts-empty">Nenhum lembrete pendente. Lembretes que você receber aparecem aqui até você marcar como feito.</div>`;
+    return;
+  }
+  pending.forEach(m => {
+    const from = users[m.contactEmail];
+    const row = document.createElement("div");
+    row.className = "reminder-row";
+    row.innerHTML = `
+      <span class="reminder-row-icon">${CHAT_ICON_REMINDER}</span>
+      <div class="reminder-row-body">
+        <span class="reminder-row-from">${from ? escapeHtml(from.name) : "—"}</span>
+        <p class="reminder-row-text">${escapeHtml(m.text)}</p>
+      </div>
+      <button type="button" class="btn btn-primary reminder-ok-btn">OK</button>`;
+    row.querySelector(".reminder-ok-btn").onclick = () => markReminderDone(m.contactEmail, m.id);
+    wrap.appendChild(row);
+  });
+}
+
+// ── Mídia: foto/vídeo enviados por arquivo ──
+const CHAT_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+const CHAT_VIDEO_MAX_BYTES = 60 * 1024 * 1024;
+// Selecionar um arquivo só abre uma pré-visualização — nada é enviado até
+// o usuário confirmar em "Enviar" (ver confirmSendChatMedia).
+let pendingChatMediaFile = null;
+function handleChatMediaSelect(input) {
+  const file = input.files[0];
+  input.value = "";
+  if (!file || !activeChatContact || !sessionEmail) return;
+  const isPhoto = file.type.startsWith("image/");
+  const isVideo = file.type.startsWith("video/");
+  if (!isPhoto && !isVideo) { showToast("Envie uma imagem ou um vídeo."); return; }
+  const maxBytes = isPhoto ? CHAT_PHOTO_MAX_BYTES : CHAT_VIDEO_MAX_BYTES;
+  if (file.size > maxBytes) { showToast(`Arquivo muito grande (máx. ${Math.round(maxBytes / 1024 / 1024)}MB).`); return; }
+  pendingChatMediaFile = file;
+  const url = URL.createObjectURL(file);
+  document.getElementById("chat-media-preview-content").innerHTML = isPhoto
+    ? `<img src="${url}" alt="Pré-visualização da foto"/>`
+    : `<video src="${url}" controls></video>`;
+  openModal("chat-media-preview-modal");
+}
+function cancelChatMediaPreview() {
+  const content = document.getElementById("chat-media-preview-content");
+  const media = content.querySelector("img, video");
+  if (media && media.src) URL.revokeObjectURL(media.src);
+  content.innerHTML = "";
+  pendingChatMediaFile = null;
+  closeModal("chat-media-preview-modal");
+}
+async function confirmSendChatMedia() {
+  const file = pendingChatMediaFile;
+  if (!file || !activeChatContact || !sessionEmail) { cancelChatMediaPreview(); return; }
+  const isPhoto = file.type.startsWith("image/");
+  const btn = document.getElementById("chat-media-preview-send-btn");
+  setBtnLoading(btn, true);
+  const blobId = newMediaId();
+  try { await saveMediaBlob(blobId, file); }
+  catch (e) { setBtnLoading(btn, false); showToast("Não foi possível enviar este arquivo."); return; }
+  const message = { id: newMediaId(), from: sessionEmail, type: isPhoto ? "photo" : "video", mediaId: blobId, mediaMime: file.type, createdAt: Date.now(), readBy: [sessionEmail] };
+  saveChatMessage(chatConversationId(sessionEmail, activeChatContact), message);
+  setBtnLoading(btn, false);
+  cancelChatMediaPreview();
+  renderChatThread();
+  playBeep(560, 0.08);
+}
+
+// ── Mídia: áudio gravado na hora (MediaRecorder — captura o áudio de
+// verdade e reproduzível depois, diferente do analisador de volume usado
+// no treino, que só serve pra visualizar/medir em tempo real). Igual ao
+// WhatsApp: parar de gravar abre uma prévia ouvível (com play/pausa e
+// seleção de trecho, via <audio controls> nativo) antes de qualquer envio
+// — descartar ou enviar são ações explícitas e separadas. ──
+let chatRecorder = null, chatRecorderChunks = [], chatRecordingStart = 0;
+let pendingChatAudioBlob = null, pendingChatAudioUrl = null, pendingChatAudioTimedDuration = 1;
+async function toggleChatAudioRecording() {
+  const btn = document.getElementById("chat-audio-record-btn");
+  if (chatRecorder && chatRecorder.state === "recording") { chatRecorder.stop(); return; }
+  let stream;
+  try { stream = (micStream && micStream.getTracks().some(t => t.readyState === "live")) ? micStream : await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); }
+  catch (e) { showToast("Não foi possível acessar o microfone."); return; }
+  chatRecorderChunks = [];
+  try { chatRecorder = new MediaRecorder(stream); }
+  catch (e) { showToast("Gravação de áudio não é suportada neste navegador."); return; }
+  chatRecorder.ondataavailable = e => { if (e.data.size) chatRecorderChunks.push(e.data); };
+  chatRecorder.onstop = () => {
+    btn.classList.remove("active");
+    const timedDurationSec = Math.round((performance.now() - chatRecordingStart) / 1000);
+    const blob = new Blob(chatRecorderChunks, { type: chatRecorder.mimeType || "audio/webm" });
+    if (blob.size === 0 || timedDurationSec < 1) return; // gravação cancelada/curta demais pra valer a pena
+    openChatAudioPreview(blob, timedDurationSec);
+  };
+  chatRecordingStart = performance.now();
+  chatRecorder.start();
+  btn.classList.add("active");
+}
+function openChatAudioPreview(blob, timedDurationSec) {
+  pendingChatAudioBlob = blob;
+  pendingChatAudioUrl = URL.createObjectURL(blob);
+  pendingChatAudioTimedDuration = timedDurationSec;
+  const player = document.getElementById("chat-audio-preview-player");
+  player.src = pendingChatAudioUrl;
+  openModal("chat-audio-preview-modal");
+}
+function cancelChatAudioPreview() {
+  const player = document.getElementById("chat-audio-preview-player");
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  if (pendingChatAudioUrl) URL.revokeObjectURL(pendingChatAudioUrl);
+  pendingChatAudioBlob = null; pendingChatAudioUrl = null;
+  closeModal("chat-audio-preview-modal");
+}
+async function confirmSendChatAudio() {
+  const blob = pendingChatAudioBlob;
+  if (!blob || !activeChatContact || !sessionEmail) { cancelChatAudioPreview(); return; }
+  const player = document.getElementById("chat-audio-preview-player");
+  const durationSec = Number.isFinite(player.duration) ? (Math.round(player.duration) || 1) : pendingChatAudioTimedDuration;
+  const btn = document.getElementById("chat-audio-preview-send-btn");
+  setBtnLoading(btn, true);
+  const blobId = newMediaId();
+  try { await saveMediaBlob(blobId, blob); }
+  catch (e) { setBtnLoading(btn, false); showToast("Não foi possível salvar o áudio."); return; }
+  const message = { id: newMediaId(), from: sessionEmail, type: "audio", mediaId: blobId, mediaMime: blob.type, durationSec, createdAt: Date.now(), readBy: [sessionEmail] };
+  saveChatMessage(chatConversationId(sessionEmail, activeChatContact), message);
+  setBtnLoading(btn, false);
+  cancelChatAudioPreview();
+  renderChatThread();
+  playBeep(560, 0.08);
 }
 
 // ══════════════════════════════════════════════
@@ -1710,7 +2559,111 @@ function toggleReducedMotion() {
   localStorage.setItem("vozativa_reduced_motion", reducedMotion ? "1" : "0");
   updateReducedMotionUI();
   playBeep(reducedMotion ? 420 : 560, 0.1);
+  updateBlobMotionState();
 }
+
+// ══════════════════════════════════════════════
+// BOLINHAS DE FUNDO — "fluido" com repulsão pelo mouse
+// ──────────────────────────────────────────────
+// Movimento orgânico de base (ondas seno/cosseno com fase e frequência
+// próprias por bolinha, então nunca sincronizam) + um empurrão suave
+// quando o cursor se aproxima, que desaparece sozinho conforme o mouse
+// se afasta (é só distância → força, recalculado a cada quadro — não
+// existe um estado de "empurrado" para desligar, ele já cai a zero
+// naturalmente). Tudo suavizado por interpolação (lerp) quadro a
+// quadro, inclusive a base e a repulsão juntas, então a transição entre
+// "flutuando livre" e "sendo empurrado" nunca dá um salto.
+// Só roda enquanto a tela de login/cadastro está visível e o movimento
+// reduzido está desligado — para de vez (cancela o quadro agendado) nos
+// outros casos, em vez de só pular o trabalho, pra não gastar nada à
+// toa em telas onde isso nunca aparece.
+// ══════════════════════════════════════════════
+let blobMotionFrame = null;
+let blobMouseX = null, blobMouseY = null;
+let blobState = null; // preenchido no primeiro start
+
+function setupBlobState() {
+  const blobs = [...document.querySelectorAll(".blob")];
+  blobState = blobs.map((el, i) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      el,
+      baseCx: rect.left + rect.width / 2,
+      baseCy: rect.top + rect.height / 2,
+      phaseX: i * 2.1,
+      phaseY: i * 1.4 + 1,
+      freqX: (2 * Math.PI) / (5 + i * 0.9),   // período curto (~5-7s) = "mais rápido"
+      freqY: (2 * Math.PI) / (6.2 + i * 1.1),
+      ampX: 0, ampY: 0, // recalculado por recomputeBlobAmplitudes(), depende da viewport
+      curX: 0, curY: 0,
+    };
+  });
+  recomputeBlobAmplitudes();
+}
+
+function recomputeBlobAmplitudes() {
+  if (!blobState) return;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  blobState.forEach((s, i) => {
+    const mult = 0.85 + i * 0.15; // cada bolinha percorre uma fração um pouco diferente da tela
+    s.ampX = vw * 0.30 * mult;
+    s.ampY = vh * 0.30 * mult;
+    const rect = s.el.getBoundingClientRect();
+    // A posição-base também muda com o layout (ex.: rotação de tela) —
+    // remonta a partir da posição atual menos o deslocamento já aplicado,
+    // pra não "pular" quando a janela é redimensionada.
+    s.baseCx = rect.left + rect.width / 2 - s.curX;
+    s.baseCy = rect.top + rect.height / 2 - s.curY;
+  });
+}
+
+const BLOB_REPEL_RADIUS = 260;
+const BLOB_REPEL_FORCE = 130;
+const BLOB_SMOOTHING = 0.05;
+
+function blobMotionFrameFn(now) {
+  blobMotionFrame = requestAnimationFrame(blobMotionFrameFn);
+  const t = now / 1000;
+  blobState.forEach(s => {
+    const baseX = Math.sin(t * s.freqX + s.phaseX) * s.ampX;
+    const baseY = Math.cos(t * s.freqY + s.phaseY) * s.ampY;
+
+    let repelX = 0, repelY = 0;
+    if (blobMouseX != null) {
+      const cx = s.baseCx + s.curX, cy = s.baseCy + s.curY;
+      const dx = cx - blobMouseX, dy = cy - blobMouseY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < BLOB_REPEL_RADIUS && dist > 0.5) {
+        const force = (1 - dist / BLOB_REPEL_RADIUS) * BLOB_REPEL_FORCE;
+        repelX = (dx / dist) * force;
+        repelY = (dy / dist) * force;
+      }
+    }
+
+    const targetX = baseX + repelX, targetY = baseY + repelY;
+    s.curX += (targetX - s.curX) * BLOB_SMOOTHING;
+    s.curY += (targetY - s.curY) * BLOB_SMOOTHING;
+    s.el.style.transform = `translate(${s.curX.toFixed(1)}px, ${s.curY.toFixed(1)}px)`;
+  });
+}
+
+function startBlobMotion() {
+  if (blobMotionFrame) return;
+  if (!blobState) setupBlobState();
+  else recomputeBlobAmplitudes();
+  blobMotionFrame = requestAnimationFrame(blobMotionFrameFn);
+}
+function stopBlobMotion() {
+  if (blobMotionFrame) { cancelAnimationFrame(blobMotionFrame); blobMotionFrame = null; }
+  if (blobState) blobState.forEach(s => { s.el.style.transform = ""; s.curX = 0; s.curY = 0; });
+}
+function updateBlobMotionState() {
+  const shouldRun = document.body.classList.contains("auth-active") && !reducedMotion;
+  if (shouldRun) startBlobMotion(); else stopBlobMotion();
+}
+window.addEventListener("mousemove", (e) => { blobMouseX = e.clientX; blobMouseY = e.clientY; });
+window.addEventListener("mouseleave", () => { blobMouseX = null; blobMouseY = null; });
+window.addEventListener("resize", () => { if (blobMotionFrame) recomputeBlobAmplitudes(); });
 function toggleDarkMode() {
   darkMode = !darkMode;
   document.body.classList.toggle("dark-mode", darkMode);
@@ -1795,19 +2748,37 @@ function pickVoice() {
   return voiceGender === "female" ? pool[0] : (pool[1] || pool[0]);
 }
 
+// Pasta com uma gravação real por fonema (ex.: fonemas-audio/A.mp3,
+// fonemas-audio/MA.mp3...). Arquivo ausente ou com erro cai
+// automaticamente pra síntese de voz do navegador — não precisa mexer
+// em código pra ir completando as gravações aos poucos.
+const DEFAULT_PHONEME_AUDIO_DIR = "fonemas-audio/";
+
 function playPhonemeAudio() {
   const btn = document.getElementById("phoneme-audio-btn");
   const fonema = desafios[currentIndex];
+  const sources = [];
+  if (activeCustomAudio[fonema]) sources.push(activeCustomAudio[fonema]);
+  sources.push(`${DEFAULT_PHONEME_AUDIO_DIR}${fonema}.mp3`);
+  tryPhonemeAudioSources(sources, 0, btn, fonema);
+}
 
-  if (activeCustomAudio[fonema]) {
-    btn.classList.add("playing");
-    const audioEl = new Audio(activeCustomAudio[fonema]);
-    audioEl.onended = () => btn.classList.remove("playing");
-    audioEl.onerror = () => btn.classList.remove("playing");
-    audioEl.play().catch(() => btn.classList.remove("playing"));
-    return;
-  }
+function tryPhonemeAudioSources(sources, i, btn, fonema) {
+  if (i >= sources.length) { speakPhonemeFallback(fonema, btn); return; }
+  btn.classList.add("playing");
+  const audioEl = new Audio(sources[i]);
+  let advanced = false;
+  const next = () => {
+    if (advanced) return;
+    advanced = true;
+    tryPhonemeAudioSources(sources, i + 1, btn, fonema);
+  };
+  audioEl.onended = () => btn.classList.remove("playing");
+  audioEl.onerror = next;
+  audioEl.play().catch(next);
+}
 
+function speakPhonemeFallback(fonema, btn) {
   if (!("speechSynthesis" in window)) { playBeep(700, 0.15); return; }
   speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(fonema.toLowerCase());
@@ -1878,7 +2849,12 @@ function closeWelcomeOverlay() {
     if (user && !user.welcomeSeen) {
       user.welcomeSeen = true;
       saveUserRecords({ [sessionEmail]: user });
+      // Paciente: o pedido/checagem de microfone é quem retoma o tutorial
+      // pendente ao terminar (ver bootstrapMicPermission/requestMicPermission/
+      // skipPermission). Médico nunca usa microfone — precisa retomar aqui
+      // mesmo, senão o tutorial da Home nunca chegaria a aparecer pra ele.
       if (user.role === "paciente") bootstrapMicPermission();
+      else resumePendingTourAfterMic();
     }
   }
 }
@@ -1927,10 +2903,16 @@ function showTourStep() {
   const step = steps[tourStepIndex];
   const target = document.querySelector(step.el);
   if (!target || !isElementVisible(target)) { nextTourStep(); return; }
-  positionSpotlightOn(target);
+  // Conteúdo do passo (texto, pontos, rótulo do botão) precisa estar
+  // definido ANTES de posicionar o tooltip — positionSpotlightOn() mede a
+  // altura real já renderizada; medir antes de trocar o texto usava a
+  // altura do passo ANTERIOR (ou nenhuma, no primeiro passo), fazendo o
+  // tooltip ficar mal posicionado/cortado em textos mais longos ou telas
+  // menores.
   document.getElementById("tour-tooltip-text").textContent = step.text;
   renderTourDots(steps.length, tourStepIndex);
   document.getElementById("tour-next-btn").textContent = tourStepIndex === steps.length - 1 ? "Concluir" : "Próximo";
+  positionSpotlightOn(target);
 }
 
 function positionSpotlightOn(target) {
@@ -1961,13 +2943,21 @@ function positionSpotlightOn(target) {
 function positionTourTooltip(r) {
   const tip = document.getElementById("tour-tooltip");
   const tipW = Math.min(300, window.innerWidth - 32);
-  const tipH = 170;
+  tip.style.width = tipW + "px";
+  // Mede a altura REAL já renderizada (texto + pontos + botões) em vez de
+  // supor um valor fixo — um texto mais longo numa tela estreita quebra em
+  // mais linhas do que num tipW largo, e um valor fixo subestimava isso,
+  // deixando o tooltip cortado ou saindo da tela em telas menores.
+  const tipH = tip.offsetHeight || 170;
   let top = r.bottom + 20;
-  if (top + tipH > window.innerHeight) top = Math.max(16, r.top - tipH - 10);
+  if (top + tipH > window.innerHeight - 16) top = r.top - tipH - 10;
+  // Se nem abaixo nem acima do alvo cabe (alvo ocupa quase a tela toda,
+  // comum em celular), força dentro dos limites da tela em vez de deixar
+  // vazar — nunca cortado, mesmo que fique sobrepondo parte do alvo.
+  top = Math.max(16, Math.min(top, window.innerHeight - tipH - 16));
   let left = r.left;
   if (left + tipW > window.innerWidth - 16) left = window.innerWidth - tipW - 16;
   if (left < 16) left = 16;
-  tip.style.width = tipW + "px";
   tip.style.top = top + "px";
   tip.style.left = left + "px";
 }
@@ -2009,22 +2999,29 @@ function replayTour() {
   else if (!screenPath.classList.contains("hidden")) key = "path";
   startTour(key);
 }
-// Nenhum tour começa por cima da tela de permissão de microfone (perguntada
-// uma única vez, ao entrar) — se ela ainda estiver aberta quando o timer do
-// tour disparar, ele é retomado depois, em resumePendingTourAfterMic().
+// Nenhum tour começa por cima das boas-vindas nem da tela de permissão de
+// microfone — a ordem certa é sempre boas-vindas → permissão de microfone
+// → tutorial, nunca o tutorial "furando a fila" na frente de qualquer um
+// dos dois. Se qualquer um dos dois ainda estiver aberto quando o timer do
+// tour disparar, ele é retomado depois, em resumePendingTourAfterMic()
+// (chamada ao fechar as boas-vindas e ao resolver a permissão).
+function tourBlockedByOtherOverlay() {
+  const welcome = document.getElementById("welcome-overlay");
+  return (welcome && !welcome.classList.contains("hidden")) || !permOverlay.classList.contains("hidden");
+}
 function maybeStartHomeTour() {
   if (!localStorage.getItem("vozativa_tour_home_seen")) {
-    setTimeout(() => { if (!screenHome.classList.contains("hidden") && permOverlay.classList.contains("hidden")) startTour("home"); }, 600);
+    setTimeout(() => { if (!screenHome.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("home"); }, 600);
   }
 }
 function maybeStartPathTour() {
   if (!localStorage.getItem("vozativa_tour_path_seen")) {
-    setTimeout(() => { if (!screenPath.classList.contains("hidden") && permOverlay.classList.contains("hidden")) startTour("path"); }, 500);
+    setTimeout(() => { if (!screenPath.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("path"); }, 500);
   }
 }
 function maybeStartAppTour() {
   if (!localStorage.getItem("vozativa_tour_app_seen")) {
-    setTimeout(() => { if (!screenApp.classList.contains("hidden") && permOverlay.classList.contains("hidden")) startTour("app"); }, 500);
+    setTimeout(() => { if (!screenApp.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("app"); }, 500);
   }
 }
 function resumePendingTourAfterMic() {
@@ -2043,7 +3040,7 @@ window.addEventListener("resize", () => {
   pathResizeRaf = requestAnimationFrame(() => renderPathTree());
 });
 
-function renderPathTree(introAnimation) {
+function renderPathTree(introAnimation, celebrateIndex) {
   const tree = document.getElementById("path-tree");
   const users = getUsers();
   const user = users[sessionEmail];
@@ -2073,6 +3070,7 @@ function renderPathTree(introAnimation) {
     node.type = "button";
     node.className = "path-node " + aligns[gi % 3] + " " + (completed ? "completed" : unlocked ? "unlocked" : "locked")
       + (pendingCustom ? " has-intervention" : "");
+    node.dataset.gi = gi;
     node.disabled = !unlocked;
     node.onclick = () => startPhase(gi);
     node.innerHTML = `
@@ -2088,9 +3086,29 @@ function renderPathTree(introAnimation) {
       node.classList.add("path-node-intro");
       node.style.animationDelay = (reverseIndex * 0.1) + "s";
     }
+    // Celebração de desbloqueio: só dispara no nó indicado por
+    // celebrateIndex (o próximo da fase recém-concluída, ver backToPath),
+    // e só se ele realmente acabou de abrir (desbloqueado, ainda não
+    // concluído) — evita "comemorar" um nó que já estava aberto antes.
+    if (gi === celebrateIndex && unlocked && !completed) {
+      node.classList.add("just-unlocked");
+      setTimeout(() => node.classList.remove("just-unlocked"), 1200);
+    }
     tree.appendChild(node);
   });
   document.getElementById("path-progress-indicator").textContent = `${doneCount} de ${grupos.length} fases`;
+
+  // Ao voltar de uma fase concluída (celebrateIndex vem de backToPath()),
+  // rola automaticamente até a próxima fase — ou até a fase que acabou de
+  // ser concluída, se for a última da trilha e não houver "próxima" pra
+  // rolar até. Feito ANTES de renderPathConnectors() porque esta insere o
+  // SVG de conectores como primeiro filho de #path-tree, o que deslocaria
+  // os índices se a busca fosse por posição em vez de data-gi.
+  if (celebrateIndex !== undefined) {
+    const targetIndex = Math.min(celebrateIndex, total - 1);
+    const targetNode = tree.querySelector(`[data-gi="${targetIndex}"]`);
+    if (targetNode) targetNode.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+  }
 
   renderPathConnectors(progress, intervention);
 }
@@ -2163,6 +3181,7 @@ function startPhase(gi) {
   phaseEndIndex = endIdx;
   currentIndex = phaseStartIndex;
   phaseSegmentStatus = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
+  phaseAttemptMediaIds = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
   phaseTotal.textContent = phaseEndIndex - phaseStartIndex + 1;
   statTotal.textContent  = phaseEndIndex - phaseStartIndex + 1;
 
@@ -2171,14 +3190,61 @@ function startPhase(gi) {
   if (micGranted || micDenied) maybeStartAppTour();
 }
 
-function markGroupCompleted(groupId) {
+// Aproveitamento mínimo para uma fase contar como CONCLUÍDA de verdade —
+// é o que desbloqueia a próxima fase na trilha e o que entra no ranking
+// de amigos. Abaixo disso, a fase pode ser tentada de novo quantas vezes
+// forem necessárias; ela não fica "travada", só não conta como dominada.
+const PHASE_COMPLETION_THRESHOLD = 65;
+
+// A sequência diária (streak) conta pela PRÁTICA do dia, não pela nota —
+// por isso é registrada sempre que a fase é finalizada, mesmo abaixo do
+// limiar de conclusão (ver comentário em SEQUÊNCIA DIÁRIA). Já o grupo só
+// entra em completedGroupIds — o que desbloqueia a próxima fase e conta
+// para o ranking — quando o aproveitamento real da fase atinge o limiar.
+function registerPhaseAttempt(groupId, scorePct) {
   if (!sessionEmail) return;
   const users = getUsers();
   const user = users[sessionEmail];
   if (!user) return;
   const progress = getProgress(user);
-  if (!progress.completedGroupIds.includes(groupId)) progress.completedGroupIds.push(groupId);
+  if (scorePct >= PHASE_COMPLETION_THRESHOLD && !progress.completedGroupIds.includes(groupId)) {
+    progress.completedGroupIds.push(groupId);
+  }
   registerStreakForToday(progress);
+  saveUserRecords({ [sessionEmail]: user });
+}
+
+// Fila de aprovação do médico: cada fase concluída (não cada fonema)
+// vira UMA entrada de revisão, agrupando as tentativas gravadas daquela
+// fase, pro fonoaudiólogo conferir se o reconhecimento automático
+// acertou. Não bloqueia o paciente — ele já avançou/desbloqueou a
+// próxima fase normalmente (ver registerPhaseAttempt); isso é só uma
+// auditoria em paralelo.
+function registerPhaseReview(group, scorePct) {
+  if (!sessionEmail) return;
+  const users = getUsers();
+  const user = users[sessionEmail];
+  if (!user) return;
+  const progress = getProgress(user);
+  const groupFonemas = group.fonemas || [];
+  const attempts = groupFonemas.map((f, i) => ({
+    fonema: f,
+    status: phaseSegmentStatus[i] || "skipped",
+    mediaId: phaseAttemptMediaIds[i] || null
+  }));
+  // Sem nenhum áudio gravado nesta fase (tudo pulado, ou microfone
+  // bloqueado o tempo todo) não há nada pro médico ouvir/validar.
+  if (!attempts.some(a => a.mediaId)) return;
+  progress.reviews.unshift({
+    id: "rv" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    groupId: group.id,
+    groupNome: group.nome,
+    timestamp: Date.now(),
+    scorePct,
+    status: "pendente",
+    attempts,
+    reviewedAt: null
+  });
   saveUserRecords({ [sessionEmail]: user });
 }
 
@@ -2213,19 +3279,32 @@ function buildProgressBar() {
     seg.className = "prog-segment";
     seg.id = `seg-${li}`;
     seg.style.setProperty("--seg-flex", 1);
-    seg.innerHTML = `<div class="prog-seg-track"><div class="prog-seg-fill" id="seg-fill-${li}"></div></div><div class="prog-seg-label">${escapeHtml(f)}</div>`;
+    seg.innerHTML = `<div class="prog-seg-track"><div class="prog-seg-fill" id="seg-fill-${li}"></div></div><div class="prog-seg-label" aria-hidden="true">${escapeHtml(f)}</div><span class="sr-only" id="seg-status-${li}"></span>`;
     progressWrap.appendChild(seg);
   });
 }
 
 const SEGMENT_STATUS_CLASSES = ["status-correct", "status-incorrect", "status-skipped"];
 
+// Rótulo de status em texto — o preenchimento colorido (verde/vermelho/
+// cinza) do segmento nunca é a ÚNICA forma de saber o resultado: cada
+// segmento também guarda esse texto num <span> visualmente oculto
+// (.sr-only), lido por leitor de tela mesmo sem enxergar a cor.
+function segmentStatusText(f, status, isCurrent, isUpcoming) {
+  if (isCurrent) return `${f}: fonema atual`;
+  if (isUpcoming) return `${f}: ainda não respondido`;
+  if (status === "correct") return `${f}: acertado`;
+  if (status === "incorrect") return `${f}: errado`;
+  return `${f}: pulado`;
+}
+
 function updateProgress() {
   const local = fonemaLocal[currentIndex];
   const groupPhonemes = (grupos[phaseGroupIndex] && grupos[phaseGroupIndex].fonemas) || [];
-  groupPhonemes.forEach((_, li) => {
+  groupPhonemes.forEach((f, li) => {
     const fill = document.getElementById(`seg-fill-${li}`);
     const seg  = document.getElementById(`seg-${li}`);
+    const statusEl = document.getElementById(`seg-status-${li}`);
     if (!fill || !seg) return;
     fill.classList.remove(...SEGMENT_STATUS_CLASSES);
     const status = phaseSegmentStatus[li];
@@ -2235,13 +3314,17 @@ function updateProgress() {
       if (status === "correct") fill.classList.add("status-correct");
       else if (status === "incorrect") fill.classList.add("status-incorrect");
       else fill.classList.add("status-skipped");
+      if (statusEl) statusEl.textContent = segmentStatusText(f, status, false, false);
     } else if (li === local) {
       fill.style.width = "0%"; seg.classList.add("active");
+      if (statusEl) statusEl.textContent = segmentStatusText(f, status, true, false);
     } else {
       fill.style.width = "0%"; seg.classList.remove("active");
+      if (statusEl) statusEl.textContent = segmentStatusText(f, status, false, true);
     }
   });
   phaseCurrent.textContent = currentIndex - phaseStartIndex + 1;
+  updateSkipButtonState();
 }
 
 function loadChallenge() {
@@ -2262,6 +3345,15 @@ function loadChallenge() {
   resetSuccessBadge();
   animateCardEnter();
   updateMicBlockedUI();
+  // Som sustentado: troca a instrução e mostra a barra de progresso de
+  // tempo sustentado (a própria startAudio() zera sustainTargetMs de novo
+  // quando a gravação começar; aqui é só o estado visual em repouso).
+  const sustainSec = activeSustainConfig[fonema] || 0;
+  const instructionEl = document.getElementById("challenge-instruction");
+  const sustainWrap = document.getElementById("sustain-progress");
+  if (instructionEl) instructionEl.textContent = sustainSec ? `Segure o som abaixo por ${sustainSec} segundos` : "Pronuncie o fonema abaixo";
+  if (sustainWrap) sustainWrap.classList.toggle("hidden", !sustainSec);
+  if (sustainSec) updateSustainProgressUI(0, sustainSec * 1000);
   if ("speechSynthesis" in window) speechSynthesis.cancel();
 }
 
@@ -2309,16 +3401,54 @@ function prevChallenge() {
   if (isRecording) stopAudio();
   if (currentIndex > phaseStartIndex) { currentIndex--; loadChallenge(); playBeep(400, 0.08); }
 }
+function skippedCountInPhase() {
+  return phaseSegmentStatus.filter(s => s === "skipped").length;
+}
+// Limite de pulos por fase — vale para todas, inclusive fases
+// personalizadas do médico, sem exceção de tamanho.
 function skipChallenge() {
+  if (skippedCountInPhase() >= SKIP_LIMIT_PER_PHASE) return;
   if (isRecording) stopAudio();
   phaseSegmentStatus[currentIndex - phaseStartIndex] = "skipped";
   playBeep(480, 0.08);
+  if (skippedCountInPhase() >= SKIP_LIMIT_PER_PHASE) {
+    showToast("Limite de 3 pulos nesta fase — os próximos exercícios precisam ser respondidos.");
+  }
   advance();
+}
+function updateSkipButtonState() {
+  const skipBtn = document.getElementById("btn-skip");
+  if (!skipBtn) return;
+  const reachedLimit = skippedCountInPhase() >= SKIP_LIMIT_PER_PHASE;
+  skipBtn.disabled = reachedLimit;
+  skipBtn.title = reachedLimit ? "Limite de 3 pulos nesta fase já foi usado" : "";
 }
 function advance() {
   currentIndex++;
   if (currentIndex > phaseEndIndex) finishPhase();
   else loadChallenge();
+}
+
+// Estado de carregamento genérico para botões que disparam uma ação
+// assíncrona real (ex.: pedir permissão de microfone, que espera o
+// diálogo nativo do navegador — pode levar alguns segundos se a pessoa
+// hesitar). Troca o conteúdo por um spinner e desabilita o clique
+// duplo; sempre restaura o texto original ao terminar, mesmo em erro.
+function setBtnLoading(btn, loading) {
+  if (!btn) return;
+  if (loading) {
+    if (btn.dataset.loading === "1") return;
+    btn.dataset.loading = "1";
+    btn.dataset.originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+  } else {
+    if (btn.dataset.loading !== "1") return;
+    delete btn.dataset.loading;
+    btn.innerHTML = btn.dataset.originalHtml || btn.innerHTML;
+    delete btn.dataset.originalHtml;
+    btn.disabled = false;
+  }
 }
 
 // ── Microfone ─────────────────────────────────
@@ -2338,14 +3468,23 @@ async function bootstrapMicPermission() {
       micDenied = true;
     }
     updateMicBlockedUI();
+    // vozativa_mic_asked é uma flag de DISPOSITIVO, não de conta — numa
+    // conta nova no mesmo aparelho onde outra conta já respondeu ao
+    // pedido antes, esse "if" é o único caminho percorrido (a tela de
+    // permissão nem chega a abrir), então é aqui que o tutorial pendente
+    // dessa conta precisa ser retomado, não só no fluxo abaixo.
+    resumePendingTourAfterMic();
     return;
   }
   showOverlay(permOverlay);
 }
-async function requestMicPermission() {
+async function requestMicPermission(evt) {
+  const btn = evt && evt.currentTarget;
+  setBtnLoading(btn, true);
   localStorage.setItem("vozativa_mic_asked", "1");
   try { micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); micGranted = true; }
   catch(e) { micDenied = true; }
+  setBtnLoading(btn, false);
   hideOverlay(permOverlay);
   updateMicBlockedUI();
   resumePendingTourAfterMic();
@@ -2360,7 +3499,9 @@ function skipPermission() {
 // Botão "Ativar microfone" dentro do próprio exercício, para quem pulou ou
 // negou a permissão inicial e mudou de ideia — sem precisar recarregar a
 // página. Precisa ser chamado a partir de um clique real do usuário.
-async function retryMicPermission() {
+async function retryMicPermission(evt) {
+  const btn = evt && evt.currentTarget;
+  setBtnLoading(btn, true);
   localStorage.setItem("vozativa_mic_asked", "1");
   try {
     micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
@@ -2369,6 +3510,7 @@ async function retryMicPermission() {
   } catch (e) {
     micDenied = true;
   }
+  setBtnLoading(btn, false);
   updateMicBlockedUI();
 }
 
@@ -2386,7 +3528,11 @@ async function toggleRecording() {
   // de segurança extra.
   if (micDenied && !micGranted) return;
   if (isRecording) {
-    if (recognitionOutcome !== null) {
+    if (sustainTargetMs > 0) {
+      // Som sustentado: um clique manual confirma com base em quanto tempo
+      // já foi sustentado até agora, não num intervalo de duração fixo.
+      finishRecording(sustainStreakMs >= sustainTargetMs);
+    } else if (recognitionOutcome !== null) {
       finishRecording(recognitionOutcome);
     } else {
       const duration = performance.now() - recordingStartTime;
@@ -2413,6 +3559,18 @@ async function startAudio() {
       return;
     }
   }
+  // Grava esta tentativa (ver fila de aprovação do médico, finishPhase/
+  // registerPhaseReview) — se o navegador não suportar MediaRecorder,
+  // o exercício continua funcionando normalmente, só sem áudio pra
+  // revisão depois (mediaRecorder fica null e stopAudioRecordingForReview
+  // não salva nada).
+  currentAttemptChunks = [];
+  try {
+    mediaRecorder = new MediaRecorder(micStream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) currentAttemptChunks.push(e.data); };
+    mediaRecorder.start();
+  } catch (e) { mediaRecorder = null; }
+
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioCtx.createAnalyser();
   // smoothingTimeConstant mais baixo = a barra reage mais rápido ao volume
@@ -2432,11 +3590,17 @@ async function startAudio() {
   lastAboveThresholdTime = null;
   matchDetected = false;
   recognitionOutcome = null;
-  recognitionActiveForTake = SpeechRecognitionAPI && !recognitionFailed && startSpeechRecognition(desafios[currentIndex]);
+  // Som sustentado nunca usa reconhecimento de fala real — "TRTRTRTR" ou
+  // uma vogal segurada por segundos não é algo que o motor de reconhecimento
+  // do navegador reconhece como texto válido; a avaliação é 100% por volume.
+  sustainTargetMs = (activeSustainConfig[desafios[currentIndex]] || 0) * 1000;
+  sustainStreakMs = 0; sustainGapMs = 0; sustainLastFrameTime = performance.now();
+  recognitionActiveForTake = sustainTargetMs === 0 && SpeechRecognitionAPI && !recognitionFailed && startSpeechRecognition(desafios[currentIndex]);
   phonemeBox.classList.add("recording");
   btnRecord.classList.add("active");
   btnRecord.querySelector(".btn-label").textContent = "Ouvindo...";
   waveformIdle.classList.add("hidden-label");
+  updateSustainProgressUI(0, sustainTargetMs);
   drawWaveform();
 
   clearRecordingTimers();
@@ -2455,6 +3619,14 @@ function stopAudio() {
   if (rafId)   { cancelAnimationFrame(rafId); rafId = null; }
   if (audioCtx){ audioCtx.close().catch(() => {}); audioCtx = null; }
   analyser = null; dataArray = null;
+  // Se chegou até aqui sem passar por stopAudioRecordingForReview (fonema
+  // pulado ou tela abandonada no meio de uma gravação), descarta a
+  // gravação em andamento sem salvar nada — só tentativas confirmadas via
+  // finishRecording entram na fila de aprovação do médico.
+  if (mediaRecorder) {
+    if (mediaRecorder.state !== "inactive") { try { mediaRecorder.stop(); } catch(e) {} }
+    mediaRecorder = null;
+  }
   phonemeBox.classList.remove("recording");
   btnRecord.classList.remove("active");
   btnRecord.querySelector(".btn-label").textContent = "Gravar Voz";
@@ -2496,6 +3668,32 @@ function drawWaveform() {
   const captureIndicator = document.getElementById("capture-indicator");
   if (captureIndicator) captureIndicator.classList.toggle("show", currentLevel > MATCH_VOLUME_THRESHOLD);
 
+  // Som sustentado: mede tempo contínuo acima do limiar em vez de comparar
+  // texto — um blip curto de silêncio (respiração, oclusiva no meio do som)
+  // não zera a contagem, só um silêncio real (> SUSTAIN_GAP_TOLERANCE_MS) zera.
+  if (sustainTargetMs > 0 && !matchDetected) {
+    const dt = now - sustainLastFrameTime;
+    sustainLastFrameTime = now;
+    if (currentLevel > MATCH_VOLUME_THRESHOLD) {
+      sustainStreakMs += dt;
+      sustainGapMs = 0;
+    } else {
+      sustainGapMs += dt;
+      if (sustainGapMs > SUSTAIN_GAP_TOLERANCE_MS) sustainStreakMs = 0;
+    }
+    updateSustainProgressUI(sustainStreakMs, sustainTargetMs);
+    if (sustainStreakMs >= sustainTargetMs) {
+      matchDetected = true;
+      finishRecording(true);
+      return;
+    }
+    if ((now - recordingStartTime) > RECORDING_MAX_MS) {
+      matchDetected = true;
+      finishRecording(false);
+    }
+    return;
+  }
+
   // Com reconhecimento real ativo nesta gravação, quem decide acerto/erro é
   // o texto reconhecido (ver startSpeechRecognition/onresult) — o heurístico
   // de volume abaixo só decide quando o reconhecimento real está
@@ -2532,11 +3730,39 @@ function clearCanvas() {
   canvas.width = W; canvas.height = H; ctx2d.clearRect(0, 0, W, H);
 }
 
+function updateSustainProgressUI(streakMs, targetMs) {
+  const fill = document.getElementById("sustain-progress-fill");
+  const label = document.getElementById("sustain-progress-label");
+  if (!fill || !label || !targetMs) return;
+  const pct = Math.min(100, (streakMs / targetMs) * 100);
+  fill.style.width = pct + "%";
+  label.textContent = `${(streakMs / 1000).toFixed(1)}s / ${(targetMs / 1000).toFixed(0)}s`;
+}
+
+// Encerra a gravação desta tentativa e salva o áudio no IndexedDB pra
+// entrar na fila de aprovação do médico (ver registerPhaseReview em
+// finishPhase) — só chamado quando a tentativa É CONFIRMADA
+// (finishRecording), nunca em abandono/pulo (esses só passam por
+// stopAudio, que descarta a gravação em andamento sem salvar).
+function stopAudioRecordingForReview(segIdx) {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") { mediaRecorder = null; return; }
+  const rec = mediaRecorder, chunks = currentAttemptChunks;
+  mediaRecorder = null;
+  rec.onstop = () => {
+    if (!chunks.length) return;
+    const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+    const id = newMediaId();
+    saveMediaBlob(id, blob).then(() => { phaseAttemptMediaIds[segIdx] = id; }).catch(() => {});
+  };
+  try { rec.stop(); } catch(e) {}
+}
+
 // Confirma e encerra a gravação (chamado automaticamente pelo match
 // contínuo, pelo timeout de silêncio/duração máxima, ou por clique manual).
 function finishRecording(correct) {
   if (!isRecording) return;
   const fonema = desafios[currentIndex];
+  stopAudioRecordingForReview(currentIndex - phaseStartIndex);
   stopAudio();
   playBeep(correct ? 620 : 460, 0.1);
   flashSuccess(correct);
@@ -2550,7 +3776,6 @@ function finishRecording(correct) {
 
 // ── Fase concluída ────────────────────────────
 function finishPhase() {
-  markGroupCompleted(grupos[phaseGroupIndex].id);
   // Pinta todos os segmentos da fase (inclusive o último, que nunca passa
   // por updateProgress() de novo depois de respondido) de acordo com o
   // status real registrado — sem isso o último ficava sempre verde,
@@ -2569,10 +3794,6 @@ function finishPhase() {
   finalScreen.classList.remove("hidden");
 
   const isLast = phaseGroupIndex === grupos.length - 1;
-  document.getElementById("final-title").textContent = isLast ? "Parabéns!" : "Fase concluída!";
-  document.getElementById("final-subtitle-lead").textContent = isLast
-    ? "Você completou toda a trilha do VozAtiva, terminando na fase"
-    : "Você completou a fase";
   document.getElementById("final-group-name").textContent = grupos[phaseGroupIndex].nome;
   const phaseLen = phaseEndIndex - phaseStartIndex + 1;
   // Contagem real e explícita: acerto de fala soma em "acertadas"; silêncio
@@ -2583,11 +3804,28 @@ function finishPhase() {
   const incorrectCount = phaseSegmentStatus.filter(s => s === "incorrect").length;
   const skippedCount   = phaseSegmentStatus.filter(s => s === "skipped" || s === null).length;
   const scorePct = phaseLen ? Math.floor((correctCount / phaseLen) * 100) : 100;
-  const unsatisfactory = scorePct < 60;
+  // Só entra em completedGroupIds (o que desbloqueia a próxima fase e conta
+  // para o ranking de amigos) quando o aproveitamento real atinge o limiar
+  // — ver PHASE_COMPLETION_THRESHOLD. A streak é registrada de todo jeito,
+  // pela prática do dia, dentro da própria função.
+  registerPhaseAttempt(grupos[phaseGroupIndex].id, scorePct);
+  registerPhaseReview(grupos[phaseGroupIndex], scorePct);
+  const completedForReal = scorePct >= PHASE_COMPLETION_THRESHOLD;
 
-  document.getElementById("final-message").textContent = unsatisfactory ? randomLowFinalMessage() : randomFinalMessage();
-  document.getElementById("final-next-label").textContent = isLast ? "Concluir trilha" : "Próxima fase";
-  document.querySelector(".final-medal").classList.toggle("hidden", unsatisfactory);
+  document.getElementById("final-title").textContent = !completedForReal ? "Quase lá!" : (isLast ? "Parabéns!" : "Fase concluída!");
+  document.getElementById("final-subtitle-lead").textContent = !completedForReal
+    ? "Você tentou a fase"
+    : (isLast ? "Você completou toda a trilha do VozAtiva, terminando na fase" : "Você completou a fase");
+  document.getElementById("final-message").textContent = completedForReal ? randomFinalMessage() : randomLowFinalMessage();
+  document.getElementById("final-next-label").textContent = !completedForReal ? "Voltar à trilha" : (isLast ? "Concluir trilha" : "Próxima fase");
+  // A medalha fica sempre visível — só a cor muda com o aproveitamento:
+  // dourado (100%, perfeito), azul (do limiar de conclusão até 99%, bom) e
+  // cinza (abaixo do limiar — a fase ainda não conta como concluída).
+  const medalEl = document.querySelector(".final-medal");
+  medalEl.classList.remove("tier-blue", "tier-gray");
+  if (scorePct >= 100) { /* dourado — cor padrão do SVG, nenhuma classe extra */ }
+  else if (completedForReal) medalEl.classList.add("tier-blue");
+  else medalEl.classList.add("tier-gray");
   statTotal.textContent = phaseLen;
   statCorrect.textContent = correctCount;
   document.getElementById("stat-wrong").textContent = incorrectCount;
@@ -2595,13 +3833,14 @@ function finishPhase() {
   document.getElementById("final-stats-summary").textContent =
     `${phaseLen} ${phaseLen === 1 ? "questão proposta" : "questões propostas"}, ${correctCount} ${correctCount === 1 ? "acertada" : "acertadas"}, ${incorrectCount} ${incorrectCount === 1 ? "errada" : "erradas"} e ${skippedCount} ${skippedCount === 1 ? "pulada" : "puladas"}.`;
 
-  if (!unsatisfactory && !reducedMotion) startFinalConfetti();
+  if (completedForReal && !reducedMotion) startFinalConfetti();
   playBeep(880, 0.3, "triangle", 0.25);
 }
 
 function restartPhase() {
   currentIndex = phaseStartIndex;
   phaseSegmentStatus = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
+  phaseAttemptMediaIds = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
   stopFinalConfetti(); finalScreen.classList.add("hidden");
   mainCard.classList.remove("hidden"); buildProgressBar(); loadChallenge();
 }
@@ -2612,7 +3851,7 @@ function backToPath() {
   finalScreen.classList.add("hidden");
   mainCard.classList.remove("hidden");
   showOnlyScreen("path");
-  renderPathTree();
+  renderPathTree(false, phaseGroupIndex + 1);
 }
 
 // Ao sair de uma fase em andamento (via botão "Voltar"), avisa que o
@@ -2682,6 +3921,7 @@ function openAdminEditor(patientEmail) {
   populateAdminGroupSelect();
   cancelEditExercise();
   renderCustomExerciseList();
+  renderPhysicalExerciseList();
   renderGroupOrderList();
   openPanel("admin-editor-panel");
 }
@@ -2739,8 +3979,21 @@ function addCustomExercise() {
   const targetGroup = grupos.find(g => g.id === groupId);
   const isEditing = editingExerciseIndex !== null;
 
+  // Som sustentado (opcional): em vez de comparar um fonema único, pede
+  // pro paciente segurar o som (ex.: "AAAAAAA", "TRTRTRTR") por N segundos.
+  const sustainRaw = val("admin-ex-sustain").trim();
+  let sustainSec = 0;
+  if (sustainRaw) {
+    sustainSec = Number(sustainRaw);
+    if (!Number.isFinite(sustainSec) || sustainSec < 1 || sustainSec > 6) {
+      errorEl.textContent = "A duração do som sustentado deve ser entre 1 e 6 segundos.";
+      errorEl.classList.remove("hidden");
+      return;
+    }
+  }
+
   if (!groupId || !targetGroup) { errorEl.textContent = "Selecione um grupo válido."; errorEl.classList.remove("hidden"); return; }
-  if (!text) { errorEl.textContent = "Informe a sílaba ou palavra."; errorEl.classList.remove("hidden"); return; }
+  if (!text) { errorEl.textContent = "Informe a sílaba, palavra ou som sustentado."; errorEl.classList.remove("hidden"); return; }
   if (!tip) { errorEl.textContent = "Informe a instrução de pronúncia."; errorEl.classList.remove("hidden"); return; }
   const usersForCheck = getUsers();
   const patientForCheck = usersForCheck[adminEditorPatientEmail];
@@ -2755,9 +4008,11 @@ function addCustomExercise() {
     ensureGroupOrder(patient);
     const cc = patient.customContent;
 
+    const exerciseRecord = { groupId, text };
+    if (sustainSec) exerciseRecord.sustainSec = sustainSec;
     if (isEditing && cc.exercises[editingExerciseIndex]) {
       const oldText = cc.exercises[editingExerciseIndex].text;
-      cc.exercises[editingExerciseIndex] = { groupId, text };
+      cc.exercises[editingExerciseIndex] = exerciseRecord;
       if (oldText !== text) {
         delete cc.dicas[oldText];
         const oldAudio = cc.audio[oldText];
@@ -2766,7 +4021,7 @@ function addCustomExercise() {
         if (!audioProvided && oldAudio && !oldTextStillUsed) cc.audio[text] = oldAudio;
       }
     } else {
-      cc.exercises.push({ groupId, text });
+      cc.exercises.push(exerciseRecord);
     }
     cc.dicas[text] = tip;
     if (audioProvided) cc.audio[text] = audioDataUrl;
@@ -2807,6 +4062,7 @@ function startEditExercise(index) {
   document.getElementById("admin-ex-text").value = ex.text;
   document.getElementById("admin-ex-tip").value = patient.customContent.dicas[ex.text] || "";
   document.getElementById("admin-ex-audio").value = "";
+  document.getElementById("admin-ex-sustain").value = ex.sustainSec || "";
   document.getElementById("admin-ex-error").classList.add("hidden");
   document.getElementById("admin-ex-submit-btn").textContent = "Salvar alterações";
   document.getElementById("admin-ex-cancel-btn").classList.remove("hidden");
@@ -2817,6 +4073,7 @@ function cancelEditExercise() {
   document.getElementById("admin-ex-text").value = "";
   document.getElementById("admin-ex-tip").value = "";
   document.getElementById("admin-ex-audio").value = "";
+  document.getElementById("admin-ex-sustain").value = "";
   document.getElementById("admin-ex-error").classList.add("hidden");
   document.getElementById("admin-ex-submit-btn").textContent = "Adicionar exercício";
   document.getElementById("admin-ex-cancel-btn").classList.add("hidden");
@@ -2856,6 +4113,153 @@ function executeDeleteExercise() {
   playBeep(300, 0.1);
 }
 
+// ══════════════════════════════════════════════
+// EXERCÍCIOS FÍSICOS/PRÁTICOS — categoria à parte da trilha diária
+// ──────────────────────────────────────────────
+// Vídeos complementares ao tratamento, adicionados pelo médico por
+// paciente (mesmo isolamento por conta que o resto do customContent):
+// exercícios com auxílio de objeto (ex.: escova de dente, rolo de
+// papel na garganta) ou feitos em conjunto — não são fonemas isolados,
+// por isso ficam numa categoria própria, fora da trilha de fases.
+// O vídeo em si vai pro IndexedDB (ver ARMAZENAMENTO DE MÍDIA); só o
+// metadado (título, descrição, referência) fica no customContent.
+// ══════════════════════════════════════════════
+const PHYSICAL_VIDEO_MAX_BYTES = 60 * 1024 * 1024; // 60MB — folgado pra um vídeo curto, mas limitado pra não travar o navegador
+
+async function addPhysicalExercise() {
+  const errorEl = document.getElementById("admin-phys-error");
+  errorEl.classList.add("hidden");
+  if (!adminEditorPatientEmail) return;
+  const title = val("admin-phys-title").trim();
+  const desc = val("admin-phys-desc").trim();
+  const fileInput = document.getElementById("admin-phys-video");
+  const file = fileInput.files[0];
+  if (!title) { errorEl.textContent = "Informe um título para o exercício."; errorEl.classList.remove("hidden"); return; }
+  if (!file) { errorEl.textContent = "Selecione um vídeo."; errorEl.classList.remove("hidden"); return; }
+  if (!file.type.startsWith("video/")) { errorEl.textContent = "O arquivo precisa ser um vídeo."; errorEl.classList.remove("hidden"); return; }
+  if (file.size > PHYSICAL_VIDEO_MAX_BYTES) { errorEl.textContent = `Vídeo muito grande (máx. ${Math.round(PHYSICAL_VIDEO_MAX_BYTES / 1024 / 1024)}MB).`; errorEl.classList.remove("hidden"); return; }
+
+  const users = getUsers();
+  const patient = users[adminEditorPatientEmail];
+  if (!patient) return;
+  ensureGroupOrder(patient); // garante customContent inteiro, inclusive physicalExercises
+
+  const btn = document.getElementById("admin-phys-submit-btn");
+  setBtnLoading(btn, true);
+  const blobId = newMediaId();
+  try {
+    await saveMediaBlob(blobId, file);
+  } catch (e) {
+    setBtnLoading(btn, false);
+    errorEl.textContent = "Não foi possível salvar o vídeo neste dispositivo.";
+    errorEl.classList.remove("hidden");
+    return;
+  }
+  patient.customContent.physicalExercises.push({
+    id: newMediaId(), title, description: desc, mediaId: blobId, mediaMime: file.type, addedAt: Date.now(),
+  });
+  saveUserRecords({ [adminEditorPatientEmail]: patient });
+  setBtnLoading(btn, false);
+
+  document.getElementById("admin-phys-title").value = "";
+  document.getElementById("admin-phys-desc").value = "";
+  fileInput.value = "";
+  renderPhysicalExerciseList();
+  playBeep(660, 0.1);
+}
+
+let physicalExercisePendingDeletion = null;
+function requestDeletePhysicalExercise(id) {
+  physicalExercisePendingDeletion = id;
+  openModal("delete-physical-exercise-modal");
+}
+function executeDeletePhysicalExercise() {
+  if (!physicalExercisePendingDeletion || !adminEditorPatientEmail) { closeModal("delete-physical-exercise-modal"); return; }
+  const id = physicalExercisePendingDeletion;
+  physicalExercisePendingDeletion = null;
+  closeModal("delete-physical-exercise-modal");
+  const users = getUsers();
+  const patient = users[adminEditorPatientEmail];
+  if (!patient) return;
+  const list = patient.customContent.physicalExercises || [];
+  const item = list.find(x => x.id === id);
+  patient.customContent.physicalExercises = list.filter(x => x.id !== id);
+  saveUserRecords({ [adminEditorPatientEmail]: patient });
+  if (item) deleteMediaBlob(item.mediaId).catch(() => {});
+  renderPhysicalExerciseList();
+  playBeep(300, 0.1);
+}
+
+function renderPhysicalExerciseList() {
+  const wrap = document.getElementById("admin-phys-list");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const users = getUsers();
+  const patient = adminEditorPatientEmail ? users[adminEditorPatientEmail] : null;
+  const list = (patient && patient.customContent && patient.customContent.physicalExercises) || [];
+  if (!list.length) {
+    wrap.innerHTML = `<div class="accounts-empty">Nenhum exercício físico adicionado ainda para este paciente.</div>`;
+    return;
+  }
+  list.slice().reverse().forEach(item => {
+    const row = document.createElement("div");
+    row.className = "admin-exercise-row";
+    row.innerHTML = `
+      <span class="admin-exercise-text">${escapeHtml(item.title)}</span>
+      <span class="admin-exercise-group">${escapeHtml(item.description || "—")}</span>
+      <span class="admin-exercise-actions">
+        <button type="button" class="admin-exercise-icon-btn danger" title="Excluir" aria-label="Excluir ${escapeHtml(item.title)}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </span>`;
+    row.querySelector(".admin-exercise-icon-btn.danger").onclick = () => requestDeletePhysicalExercise(item.id);
+    wrap.appendChild(row);
+  });
+}
+
+// ── Lado do paciente: assistir os exercícios físicos enviados ──
+function openPhysicalExercisesPanel() {
+  renderPatientPhysicalExerciseList();
+  openPanel("physical-exercises-panel");
+}
+function renderPatientPhysicalExerciseList() {
+  const wrap = document.getElementById("physical-exercises-list");
+  if (!wrap || !sessionEmail) return;
+  wrap.innerHTML = "";
+  const users = getUsers();
+  const user = users[sessionEmail];
+  const list = (user && user.customContent && user.customContent.physicalExercises) || [];
+  if (!list.length) {
+    wrap.innerHTML = `<div class="accounts-empty">Seu fonoaudiólogo(a) ainda não adicionou exercícios físicos.<br>Eles aparecem aqui assim que forem enviados.</div>`;
+    return;
+  }
+  list.slice().reverse().forEach(item => {
+    const card = document.createElement("div");
+    card.className = "physical-exercise-card";
+    card.innerHTML = `
+      <div class="physical-exercise-info">
+        <h4>${escapeHtml(item.title)}</h4>
+        ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+      </div>
+      <button type="button" class="btn btn-ghost physical-exercise-play-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Assistir
+      </button>
+      <div class="physical-exercise-video-wrap hidden"></div>`;
+    card.querySelector(".physical-exercise-play-btn").onclick = async (e) => {
+      const btn = e.currentTarget;
+      const videoWrap = card.querySelector(".physical-exercise-video-wrap");
+      if (!videoWrap.classList.contains("hidden")) return;
+      const url = await mediaBlobUrl(item.mediaId);
+      if (!url) { showToast("Não foi possível carregar este vídeo."); return; }
+      videoWrap.innerHTML = `<video controls src="${url}"></video>`;
+      videoWrap.classList.remove("hidden");
+      btn.classList.add("hidden");
+    };
+    wrap.appendChild(card);
+  });
+}
+
 function renderCustomExerciseList() {
   const wrap = document.getElementById("admin-custom-list");
   if (!wrap) return;
@@ -2876,6 +4280,7 @@ function renderCustomExerciseList() {
       <span class="admin-exercise-text">${escapeHtml(ex.text)}</span>
       <span class="admin-exercise-group">${g ? escapeHtml(g.nome) : "—"}</span>
       ${cc.audio && cc.audio[ex.text] ? '<span class="admin-exercise-audio-flag" title="Tem áudio personalizado">🔊</span>' : ""}
+      ${ex.sustainSec ? `<span class="admin-exercise-audio-flag" title="Som sustentado por ${ex.sustainSec}s">⏱ ${ex.sustainSec}s</span>` : ""}
       <span class="admin-exercise-actions">
         <button type="button" class="admin-exercise-icon-btn" title="Editar" aria-label="Editar exercício ${escapeHtml(ex.text)}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -3218,6 +4623,8 @@ function openPatientDetail(email) {
   document.getElementById("detail-meta").textContent =
     `${levelLabel(computeLevel(p))} · ID da conta ${p.accountId || "—"} · ${p.phone || "sem telefone cadastrado"}`;
 
+  renderPatientReviews(p);
+
   const stats = computePatientStats(p);
   const patientGroups = getUserGroups(p);
 
@@ -3227,7 +4634,8 @@ function openPatientDetail(email) {
     const done = p.progress && p.progress.completedGroupIds && p.progress.completedGroupIds.includes(g.id);
     const dot = document.createElement("div");
     dot.className = "chart-path-dot" + (done ? " done" : "");
-    dot.title = g.nome;
+    dot.title = `${g.nome}: ${done ? "concluída" : "pendente"}`;
+    dot.setAttribute("aria-label", dot.title);
     dot.textContent = gi + 1;
     pathRow.appendChild(dot);
   });
@@ -3260,6 +4668,145 @@ function openPatientDetail(email) {
   }
 }
 
+const REVIEW_STATUS_LABEL = { correct: "Certo", incorrect: "Errado", skipped: "Pulado" };
+
+// Fila de aprovação do médico (ver registerPhaseReview em script.js) —
+// lista só as revisões "pendente" desta fase; aprovar/rejeitar tira o
+// item da lista (não bloqueia o progresso do paciente, é só auditoria).
+function renderPatientReviews(patient) {
+  const wrap = document.getElementById("detail-reviews-list");
+  if (!wrap) return;
+  const reviews = ((patient.progress && patient.progress.reviews) || []).filter(r => r.status === "pendente");
+  wrap.innerHTML = "";
+  if (!reviews.length) {
+    wrap.innerHTML = `<div class="perf-empty">Nenhuma aprovação pendente.</div>`;
+    return;
+  }
+  reviews.forEach(r => {
+    const card = document.createElement("div");
+    card.className = "review-card";
+    const date = new Date(r.timestamp).toLocaleString("pt-BR");
+    card.innerHTML = `
+      <div class="review-card-header">
+        <span class="review-card-title">${escapeHtml(r.groupNome)}</span>
+        <span class="review-card-score">${r.scorePct}% de acerto</span>
+        <span class="review-card-date">${escapeHtml(date)}</span>
+      </div>
+      <div class="review-attempts"></div>
+      <div class="review-actions">
+        <button type="button" class="btn btn-side review-reject-btn">Rejeitar</button>
+        <button type="button" class="btn btn-primary review-approve-btn">Aprovar</button>
+      </div>`;
+    const attemptsWrap = card.querySelector(".review-attempts");
+    r.attempts.forEach(a => {
+      const row = document.createElement("div");
+      row.className = "review-attempt-row";
+      row.innerHTML = `
+        <span class="review-attempt-fonema">${escapeHtml(a.fonema)}</span>
+        <span class="review-attempt-status status-${a.status}">${REVIEW_STATUS_LABEL[a.status] || a.status}</span>
+        ${a.mediaId ? `<audio controls class="review-attempt-audio"></audio>` : `<span class="review-attempt-none">sem áudio</span>`}`;
+      attemptsWrap.appendChild(row);
+      if (a.mediaId) {
+        const audioEl = row.querySelector("audio");
+        mediaBlobUrl(a.mediaId).then(url => { if (url) audioEl.src = url; });
+      }
+    });
+    card.querySelector(".review-approve-btn").onclick = () => setReviewStatus(patient.email, r.id, "aprovado");
+    card.querySelector(".review-reject-btn").onclick = () => setReviewStatus(patient.email, r.id, "rejeitado");
+    wrap.appendChild(card);
+  });
+}
+
+function setReviewStatus(patientEmail, reviewId, status) {
+  const users = getUsers();
+  const patient = users[patientEmail];
+  if (!patient) return;
+  const progress = getProgress(patient);
+  const review = (progress.reviews || []).find(r => r.id === reviewId);
+  if (!review) return;
+  review.status = status;
+  review.reviewedAt = Date.now();
+  // Já foi revisado pelo médico — o áudio não tem mais nenhuma
+  // finalidade, libera o espaço em vez de acumular indefinidamente.
+  review.attempts.forEach(a => {
+    if (a.mediaId) { releaseMediaBlob(a.mediaId); a.mediaId = null; }
+  });
+  saveUserRecords({ [patientEmail]: patient });
+  openPatientDetail(patientEmail);
+}
+
+// ══════════════════════════════════════════════
+// ROLAGEM POR CLIQUE-E-ARRASTA (desktop)
+// ──────────────────────────────────────────────
+// Escopo deliberadamente restrito — só nas áreas que realmente costumam
+// ter bastante conteúdo pra rolar: listas longas (Amigos, Contas),
+// edição da ordem das fases do médico, a árvore de fases (trilha) e a
+// tela do médico (que pode ter vários gráficos/pacientes empilhados).
+// Em todo o resto do app (telas curtas, cartão de treino, formulários)
+// só a rolagem nativa (roda, touchpad, toque) continua ativa — arrastar
+// nessas telas nunca é interceptado, de propósito, pra não competir com
+// outras interações.
+//
+// Usa eventos de mouse "clássicos" (mousedown/mousemove/mouseup), não
+// Pointer Events — em telas de toque esses eventos praticamente não
+// disparam para gestos de toque (o navegador já trata como toque puro),
+// então rolagem por dedo e por roda/touchpad continuam 100% nativas,
+// sem nenhuma interferência. Só começa a "arrastar" de verdade depois
+// de um pequeno limiar de movimento (DRAG_SCROLL_THRESHOLD_PX) — um
+// clique simples num botão dentro da área continua funcionando
+// normalmente, porque nunca chega a ser tratado como arraste.
+// ══════════════════════════════════════════════
+const DRAG_SCROLL_THRESHOLD_PX = 6;
+function enableDragScroll(el, shouldActivate) {
+  if (!el || el.dataset.dragScrollBound === "1") return;
+  el.dataset.dragScrollBound = "1";
+  let startX = 0, startY = 0, startScrollTop = 0, startScrollLeft = 0;
+  let pending = false, dragging = false;
+
+  el.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (shouldActivate && !shouldActivate()) return;
+    // Controles clicáveis (botões, links, campos, o "puxador" de
+    // reordenar fases) continuam 100% nativos — o arraste só começa se
+    // o clique começar em espaço "vazio" do painel (texto, preenchimento,
+    // espaço entre itens).
+    if (e.target.closest(
+      ".group-order-handle, input, textarea, select, [contenteditable], " +
+      "button, a, .btn, .icon-btn, [role='button'], .path-node, .fonema-btn"
+    )) return;
+    pending = true; dragging = false;
+    startX = e.clientX; startY = e.clientY;
+    startScrollTop = el.scrollTop; startScrollLeft = el.scrollLeft;
+    // Evita que o navegador comece a SELECIONAR TEXTO no mesmo gesto —
+    // sem isto, os primeiros pixels do arraste (antes do limiar decidir
+    // "isto é um arraste") já teriam disparado seleção nativa, competindo
+    // visualmente com a rolagem.
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!pending) return;
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    if (!dragging && Math.hypot(dx, dy) > DRAG_SCROLL_THRESHOLD_PX) {
+      dragging = true;
+      el.classList.add("drag-scrolling");
+    }
+    if (dragging) {
+      el.scrollTop = startScrollTop - dy;
+      el.scrollLeft = startScrollLeft - dx;
+    }
+  });
+  window.addEventListener("mouseup", () => {
+    if (dragging) {
+      // Suprime o "click" gerado por este mesmo gesto de soltar o botão,
+      // só desta vez — sem isso, soltar o arraste em cima de um botão
+      // dispararia o clique dele por engano.
+      window.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true });
+    }
+    pending = false; dragging = false;
+    el.classList.remove("drag-scrolling");
+  });
+}
+
 // ══════════════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════════════
@@ -3267,3 +4814,29 @@ migrateAccountIds();
 loadThemePreference();
 loadReducedMotionPreference();
 initAuthUI();
+
+// Listas longas — cada uma já tem sua própria rolagem interna (ver
+// .friends-list/.accounts-list com altura fixa no CSS).
+document.querySelectorAll(".friends-list, .accounts-list, .search-results-wrap").forEach(el => enableDragScroll(el));
+// Cabeçalho da Home (Perfil/Amigos/Mensagens/Lembretes/Configurações) —
+// rola na horizontal em vez de quebrar linha quando não cabe tudo.
+const homeTop = document.querySelector(".home-top");
+if (homeTop) enableDragScroll(homeTop);
+// Edição da ordem das fases do médico — o painel inteiro (não só a
+// lista) porque o formulário de cima também pode empurrar a lista pra
+// baixo da área visível.
+const adminEditorCard = document.querySelector("#admin-editor-panel .panel-card");
+if (adminEditorCard) enableDragScroll(adminEditorCard);
+// Central de Ajuda — outra "lista extensa" (perguntas frequentes) que
+// costuma passar do que cabe na tela.
+const helpCard = document.querySelector("#help-panel .panel-card");
+if (helpCard) enableDragScroll(helpCard);
+// Árvore de fases (trilha) e painel do médico — telas inteiras que
+// podem crescer mais que a viewport; ativa só quando uma delas está
+// aberta (a página em si é quem rola, não um contêiner interno).
+// overlayStack.length === 0 é essencial aqui: sem isso, arrastar dentro
+// de um painel aberto por cima da trilha/painel do médico (ex.: a
+// Central de Ajuda) também rolava a tela de fundo — o mousedown que
+// começa dentro do painel sobe (bubble) até documentElement do mesmo
+// jeito, não importa o z-index visual por cima.
+enableDragScroll(document.scrollingElement, () => (activeScreenName === "path" || activeScreenName === "doctor") && overlayStack.length === 0);
