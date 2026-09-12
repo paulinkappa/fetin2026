@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>VozAtiva</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;900&family=Baloo+2:wght@700;800;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=48" />
+  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700;800&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=54" />
 </head>
 <body>
   <script>
@@ -45,6 +45,17 @@
       <div class="modal-actions">
         <button class="btn modal-btn-cancel" onclick="closeModal('logout-modal')">Cancelar</button>
         <button class="btn modal-btn-confirm" onclick="confirmLogout()">Sair da conta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: ALTERAÇÕES NÃO SALVAS NO PERFIL ════ -->
+  <div class="modal-overlay hidden" id="profile-unsaved-modal">
+    <div class="modal-card">
+      <p class="modal-question">Você tem alterações não salvas. Deseja sair sem salvar?</p>
+      <div class="modal-actions">
+        <button class="btn modal-btn-cancel" onclick="closeModal('profile-unsaved-modal')">Continuar editando</button>
+        <button class="btn modal-btn-confirm" onclick="discardProfileEditAndClose()">Sair sem salvar</button>
       </div>
     </div>
   </div>
@@ -195,7 +206,7 @@
     <div class="panel-card">
       <div class="panel-header">
         <h2 class="panel-title">Meu Perfil</h2>
-        <button class="icon-btn panel-close" onclick="closePanel('profile-panel')" aria-label="Fechar">
+        <button class="icon-btn panel-close" onclick="requestCloseProfilePanel()" aria-label="Fechar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -230,6 +241,7 @@
               <svg class="copy-icon copy-icon-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               <svg class="copy-icon copy-icon-done hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </button>
+            <span class="copy-feedback" id="copy-feedback" aria-live="polite"></span>
           </div>
         </label>
 
@@ -315,12 +327,20 @@
           <p>Toque em "Gravar Voz", fale o fonema exibido e toque novamente para parar. Sua voz aparece no visualizador de ondas.</p>
         </details>
         <details class="help-item">
+          <summary>🩺 Alguém ouve minhas gravações?</summary>
+          <p>Sim: ao concluir cada fase, o áudio das suas tentativas fica disponível para o seu fonoaudiólogo conferir se o app reconheceu sua fala corretamente. Ele pode aprovar ou pedir pra você repetir algum fonema — isso não trava seu progresso, você continua avançando normalmente enquanto isso.</p>
+        </details>
+        <details class="help-item">
           <summary>🌗 Como ativo o tema escuro?</summary>
           <p>Toque no botão circular no canto da tela (ícone de sol/lua) — ele funciona em qualquer tela do app, inclusive antes de entrar na conta.</p>
         </details>
         <details class="help-item">
           <summary>🌳 Como funciona a trilha de fases?</summary>
-          <p>Cada nó da árvore representa um grupo de fonemas. Complete uma fase para desbloquear a próxima, sempre subindo na trilha.</p>
+          <p>Cada nó da árvore representa um grupo de fonemas. Você precisa acertar pelo menos 65% dos exercícios de uma fase pra ela contar como concluída, desbloquear a próxima e entrar no seu ranking — errar ou pular um exercício não conta como concluído, mas você pode repetir a fase quantas vezes quiser.</p>
+        </details>
+        <details class="help-item">
+          <summary>🔁 O que é o nível "Revisão"?</summary>
+          <p>Se o seu fonoaudiólogo perceber, ao ouvir uma gravação, que algum fonema não foi reconhecido corretamente, ele pode pedir pra você repetir — esses fonemas aparecem separados no card "Revisão", acima da trilha. Ele só fica colorido e clicável quando há algo pendente ali.</p>
         </details>
         <details class="help-item">
           <summary>👤 Como edito meu perfil e foto?</summary>
@@ -1010,6 +1030,21 @@
         </div>
       </header>
       <h2 class="path-title">Sua trilha de treino</h2>
+      <!-- Nível de Revisão — fonemas que o fonoaudiólogo rejeitou na fila
+           de aprovação (ver setReviewStatus/G3 na auditoria). Fica fora
+           da árvore de fases de propósito: não desbloqueia nem depende
+           de nenhum nó vizinho, começa apagado/inclicável (button
+           disabled) e só liga quando há algo pendente (ver
+           renderRemedialNode em script.js). -->
+      <button type="button" class="remedial-node" id="remedial-node" onclick="startRemedialPhase()" disabled>
+        <span class="remedial-node-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        </span>
+        <span class="remedial-node-text">
+          <span class="remedial-node-title">Revisão</span>
+          <span class="remedial-node-meta" id="remedial-node-meta">Nada pendente por enquanto</span>
+        </span>
+      </button>
       <div class="path-tree" id="path-tree"><!-- gerado via JS --></div>
     </div>
   </div>
@@ -1052,9 +1087,10 @@
             <button class="phoneme-audio-btn" id="phoneme-audio-btn" onclick="playPhonemeAudio()" aria-label="Ouvir pronúncia do fonema">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
             </button>
-            <div class="success-badge hidden" id="success-badge">
+            <div class="success-badge hidden" id="success-badge" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
+            <div class="sr-only" id="recording-result-announce" aria-live="assertive"></div>
           </div>
           <div class="tip-box"><span class="tip-text" id="tip-text"></span></div>
           <div class="waveform-wrapper">
@@ -1199,6 +1235,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=42"></script>
+  <script src="script.js?v=47"></script>
 </body>
 </html>

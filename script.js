@@ -221,8 +221,30 @@ let phaseSegmentStatus = []; // status por fonema da fase atual: "correct" | "in
 // microfone) — usado só pra montar a fila de aprovação do médico
 // (ver registerPhaseReview em finishPhase).
 let phaseAttemptMediaIds = [];
+// Paralelo a phaseSegmentStatus: true só quando o reconhecimento de fala
+// real (Web Speech API) deu o resultado desta tentativa — false quando
+// caiu pro heurístico de volume/duração (que não confere SE é fala,
+// só volume e tempo — ver G1 na auditoria). Mostrado pro médico na fila
+// de revisão, pra ele saber quando o "certo" não foi verificado por voz.
+let phaseAttemptVerified = [];
+// Incrementado toda vez que uma tentativa de fase é abandonada/reiniciada
+// (releasePendingPhaseAttempts) — o salvamento assíncrono de áudio
+// (stopAudioRecordingForReview) confere esse número antes de escrever no
+// array, pra nunca gravar o id de uma gravação velha na fase/tentativa
+// nova (ver T2/F2 na auditoria).
+let phaseAttemptGeneration = 0;
+// true assim que finishPhase já criou a revisão do médico pra esta
+// tentativa — a partir daí os ids em phaseAttemptMediaIds pertencem a
+// essa revisão e NUNCA devem ser liberados por releasePendingPhaseAttempts
+// (ex.: paciente clica "Tentar novamente" logo depois de terminar).
+let phaseAttemptCommitted = false;
 let mediaRecorder = null;
 let currentAttemptChunks = [];
+// Contador monotônico de pulos DE VERDADE usados na fase atual — ao
+// contrário de contar quantos segmentos estão "skipped" agora (que cai
+// se o paciente voltar e responder um deles), este número só sobe,
+// fechando a brecha de burlar o limite indo e voltando (ver F6).
+let phaseSkipsUsed = 0;
 const SKIP_LIMIT_PER_PHASE = 3; // igual para todas as fases, incluindo personalizadas
 let recordingPeak       = 0;
 let recordingStartTime = 0;
@@ -371,6 +393,11 @@ let analyser  = null;
 let micStream = null;
 let rafId     = null;
 let dataArray = null;
+// Qual micStream o audioCtx/analyser atuais estão ligados a — usado por
+// startAudio pra saber se pode reaproveitar o grafo de áudio existente
+// ou se precisa recriar (stream trocou de verdade, não só pausou/voltou
+// entre exercícios). Ver correção da permissão de microfone repetida.
+let audioGraphStream = null;
 
 // sons sintéticos (beeps) para feedback
 let sfxCtx = null;
@@ -677,14 +704,35 @@ function goToPath(introAnimation) {
   clearHomeSearch();
   showOnlyScreen("path");
   renderPathTree(!!introAnimation);
+  syncPathHeaderPosition();
   maybeStartPathTour();
 }
+
+// O cabeçalho da Árvore de Progresso (Voltar/fase/tema/dica) não
+// consegue ficar "grudado" no topo via position:sticky nem :fixed puro
+// nesta base específica (ver comentário grande em style.css, no bloco
+// #screen-path .app-header — resumindo: a animação de entrada de TODA
+// tela deixa um transform residual que quebra o containing block dos
+// dois). Sincroniza manualmente via JS a cada rolagem, só enquanto a
+// tela da trilha está visível — mesma ideia de positionDropdownMenu.
+function syncPathHeaderPosition() {
+  if (screenPath.classList.contains("hidden")) return;
+  const header = document.querySelector("#screen-path .app-header");
+  if (!header) return;
+  header.style.top = document.documentElement.scrollTop + "px";
+}
+let pathHeaderSyncRaf = null;
+window.addEventListener("scroll", () => {
+  if (pathHeaderSyncRaf) return;
+  pathHeaderSyncRaf = requestAnimationFrame(() => { pathHeaderSyncRaf = null; syncPathHeaderPosition(); });
+}, { passive: true });
 
 function openDoctorScreen() {
   closeDropdowns();
   clearHomeSearch();
   showOnlyScreen("doctor");
   showDoctorList();
+  maybeStartDoctorPanelTour();
 }
 
 // ══════════════════════════════════════════════
@@ -751,9 +799,38 @@ function focusFirstIn(container) {
 function showOverlay(el) {
   overlayStack.push({ el, prevFocus: document.activeElement });
   el.classList.remove("hidden");
+  ensureDialogA11y(el);
   focusFirstIn(el);
 }
-function hideOverlay(el) {
+
+// Garante role="dialog"/aria-modal/aria-labelledby em QUALQUER modal ou
+// painel aberto por showOverlay — um só lugar, em vez de marcar cada um
+// dos ~25 overlays manualmente no HTML (ver A1 na auditoria: só 2 deles
+// tinham essa semântica antes). Não sobrescreve um overlay que já
+// declarou a própria role/label deliberadamente.
+function ensureDialogA11y(el) {
+  if (!el.hasAttribute("role")) el.setAttribute("role", "dialog");
+  el.setAttribute("aria-modal", "true");
+  if (!el.hasAttribute("aria-labelledby") && !el.hasAttribute("aria-label")) {
+    const titleEl = el.querySelector(".panel-title, .modal-question, h2, h3");
+    if (titleEl) {
+      if (!titleEl.id) titleEl.id = "dlg-title-" + (el.id || Math.random().toString(36).slice(2, 8));
+      el.setAttribute("aria-labelledby", titleEl.id);
+    }
+  }
+}
+// force=true pula a checagem de alterações não salvas (usado só por
+// discardProfileEditAndClose, depois que a pessoa já confirmou que quer
+// descartar) — sem isso o painel de perfil não teria como fechar de
+// verdade nem depois de confirmado, porque o guard rodaria de novo.
+function hideOverlay(el, force) {
+  // Painel de edição de perfil não fecha "de graça" com alteração
+  // pendente — nem pelo X, nem pelo Esc (que também chama hideOverlay
+  // direto) — sem confirmar que a pessoa realmente quer sair sem salvar.
+  if (!force && el && el.id === "profile-panel" && isProfileDirty()) {
+    openModal("profile-unsaved-modal");
+    return;
+  }
   el.classList.add("hidden");
   const idx = overlayStack.map(o => o.el).lastIndexOf(el);
   const entry = idx !== -1 ? overlayStack.splice(idx, 1)[0] : overlayStack.pop();
@@ -793,7 +870,7 @@ function openPanel(id) {
   closeDropdowns();
   clearHomeSearch();
   if (id === "accounts-panel") { showAccountsList(); renderAccounts(); }
-  if (id === "profile-panel") refreshProfilePanelForRole();
+  if (id === "profile-panel") { refreshProfilePanelForRole(); snapshotProfileForEdit(); }
   showOverlay(document.getElementById(id));
 }
 
@@ -860,15 +937,13 @@ async function handleAvatarChange(event) {
   try {
     dataUrl = await compressImageFile(file, AVATAR_MAX_DIM, AVATAR_QUALITY);
   } catch (e) {
-    showToast("Não foi possível usar essa imagem como foto de perfil.");
+    showToast("Não foi possível usar essa imagem como foto de perfil.", true);
     return;
   }
+  // Só atualiza a pré-visualização e o rascunho — não grava nada ainda,
+  // mesmo motivo de selectPresetAvatar: só "Salvar alterações" persiste.
   setAvatarUI(dataUrl);
-  if (sessionEmail) {
-    const users = getUsers();
-    const user = users[sessionEmail];
-    if (user) { user.avatar = dataUrl; saveUserRecords({ [sessionEmail]: user }); }
-  }
+  profileDraftAvatar = dataUrl;
   // Envio de foto agora é uma das opções dentro do mesmo painel de
   // "Foto de perfil" (junto com os ícones) — fecha ao concluir, igual
   // ao clicar num ícone predefinido (selectPresetAvatar).
@@ -920,13 +995,69 @@ function openAvatarPicker() {
 }
 
 function selectPresetAvatar(path) {
+  // Só atualiza a pré-visualização e o rascunho — não grava nada ainda.
+  // A escolha só vira permanente ao clicar em "Salvar alterações" (ver
+  // saveProfile) — sem isso, trocar a foto e sair sem salvar já deixava
+  // a mudança valendo, tornando o botão de salvar inútil.
   setAvatarUI(path);
-  if (sessionEmail) {
-    const users = getUsers();
-    const user = users[sessionEmail];
-    if (user) { user.avatar = path; saveUserRecords({ [sessionEmail]: user }); }
-  }
+  profileDraftAvatar = path;
   closePanel("avatar-picker-panel");
+}
+
+// ── Editar perfil: rascunho não salvo ──────────
+// Tirado toda vez que o painel de perfil abre (ver openPanel) — usado só
+// pra saber se há alteração pendente (nome/telefone/bio/médico-crm/
+// avatar) ao tentar sair sem clicar em "Salvar alterações".
+let profileEditSnapshot = null;
+// undefined = avatar não foi mexido nesta sessão de edição; null = "sem
+// foto"/ícone padrão; string = caminho de ícone ou data URL de foto nova.
+let profileDraftAvatar = undefined;
+
+function snapshotProfileForEdit() {
+  const users = getUsers();
+  const user = sessionEmail ? users[sessionEmail] : null;
+  profileDraftAvatar = undefined;
+  profileEditSnapshot = user ? {
+    name: user.name || "", phone: user.phone || "", bio: user.bio || "",
+    doctor: user.doctor || "", crm: user.crm || "", avatar: user.avatar || null
+  } : null;
+}
+
+function isProfileDirty() {
+  const s = profileEditSnapshot;
+  if (!s) return false;
+  if (val("pf-name") !== s.name) return true;
+  if (val("pf-phone") !== s.phone) return true;
+  if (val("pf-bio") !== s.bio) return true;
+  if (val("pf-doctor") !== s.doctor) return true;
+  if (val("pf-crm") !== s.crm) return true;
+  if (profileDraftAvatar !== undefined && profileDraftAvatar !== s.avatar) return true;
+  return false;
+}
+
+// Botão "X" do painel de perfil — pede confirmação só se há algo pra
+// perder; sem alteração nenhuma, fecha normalmente sem interromper.
+function requestCloseProfilePanel() {
+  if (isProfileDirty()) { openModal("profile-unsaved-modal"); return; }
+  closePanel("profile-panel");
+}
+// "Sair sem salvar" no modal de confirmação — descarta o rascunho
+// (inclusive a pré-visualização do avatar, que volta pro valor salvo) e
+// só então fecha de fato o painel (force=true pula o guard de novo).
+function discardProfileEditAndClose() {
+  closeModal("profile-unsaved-modal");
+  const s = profileEditSnapshot;
+  if (s) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+    set("pf-name", s.name); set("pf-phone", s.phone); set("pf-bio", s.bio);
+    set("pf-doctor", s.doctor); set("pf-crm", s.crm);
+    setAvatarUI(s.avatar);
+  }
+  profileDraftAvatar = undefined;
+  document.getElementById("pf-phone-error").classList.add("hidden");
+  document.getElementById("pf-phone").classList.remove("input-error");
+  document.getElementById("pf-crm-error").classList.add("hidden");
+  hideOverlay(document.getElementById("profile-panel"), true);
 }
 
 // ── Editar perfil ─────────────────────────────
@@ -946,30 +1077,41 @@ function refreshProfilePanelForRole() {
   }
 }
 
+// Guarda o timer do feedback "Copiado!" — clicar várias vezes seguidas
+// reinicia o mesmo timer em vez de empilhar vários, que deixaria o
+// texto/ícone piscando ou revertendo cedo demais (estados conflitantes).
+let copyFeedbackTimer = null;
 function copyAccountId() {
   const input = document.getElementById("pf-account-id");
   const btn = document.querySelector(".field-copy-btn");
+  const feedback = document.getElementById("copy-feedback");
   if (!input.value) return;
   const showCopied = () => {
+    clearTimeout(copyFeedbackTimer);
     btn.classList.add("copied");
     btn.querySelector(".copy-icon-default").classList.add("hidden");
     btn.querySelector(".copy-icon-done").classList.remove("hidden");
-    setTimeout(() => {
+    if (feedback) { feedback.textContent = "Copiado!"; feedback.classList.add("show"); }
+    copyFeedbackTimer = setTimeout(() => {
       btn.classList.remove("copied");
       btn.querySelector(".copy-icon-default").classList.remove("hidden");
       btn.querySelector(".copy-icon-done").classList.add("hidden");
+      if (feedback) feedback.classList.remove("show");
     }, 1500);
   };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(input.value).then(showCopied).catch(() => {
-      input.select();
-      document.execCommand("copy");
-      showCopied();
-    });
-  } else {
+  // "Copiado!" só aparece quando a cópia realmente deu certo — o
+  // fallback de execCommand devolve um booleano de sucesso que antes
+  // era ignorado, mostrando sucesso mesmo quando a cópia falhava.
+  const fallbackCopy = () => {
     input.select();
-    document.execCommand("copy");
-    showCopied();
+    const ok = document.execCommand("copy");
+    if (ok) showCopied();
+    else showToast("Não foi possível copiar o ID — selecione e copie manualmente.", true);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).then(showCopied).catch(fallbackCopy);
+  } else {
+    fallbackCopy();
   }
   playBeep(660, 0.08);
 }
@@ -1007,10 +1149,21 @@ function saveProfile() {
   user.name  = val("pf-name");
   user.phone = phone;
   user.bio   = val("pf-bio");
-  saveUserRecords({ [sessionEmail]: user });
+  // Avatar só é persistido aqui, no salvamento explícito — enquanto o
+  // painel estava aberto, selectPresetAvatar/handleAvatarChange só
+  // atualizavam a pré-visualização (profileDraftAvatar), nunca o storage.
+  if (profileDraftAvatar !== undefined) user.avatar = profileDraftAvatar;
+  // Se a gravação falhar (armazenamento cheio), não fecha o painel nem
+  // toca o som de sucesso — o aviso de erro já apareceu (ver saveUsers),
+  // e o paciente precisa perceber que precisa tentar de novo (ver T3).
+  if (!saveUserRecords({ [sessionEmail]: user })) return;
   applyUserToUI(user);
+  // Estado salvo agora é o novo "original" — fechar o painel logo em
+  // seguida (ou reabrir sem mexer em nada) não deve mais ser tratado
+  // como alteração pendente.
+  snapshotProfileForEdit();
   playBeep(660, 0.1);
-  closePanel("profile-panel");
+  hideOverlay(document.getElementById("profile-panel"), true);
 }
 
 // Ativa a barra de rolagem (altura fixa) só quando a lista realmente
@@ -1106,16 +1259,26 @@ function showAccountsList() {
   listView.classList.remove("hidden");
   focusFirstIn(listView);
 }
+// Confere e-mail/senha contra as contas salvas — os três fluxos de
+// login do app (entrar, trocar de conta, escolher conta salva) faziam
+// essa mesma checagem copiada e colada, só variando a mensagem de erro
+// (login pede e-mail+senha; os outros dois já sabem o e-mail, só pedem
+// a senha de novo).
+async function authenticateUser(email, password, errorElId, wrongMessage) {
+  const users = getUsers();
+  const user = users[email];
+  if (!user || !(await verifyPassword(password, user))) {
+    showAuthError(errorElId, wrongMessage);
+    return null;
+  }
+  return user;
+}
+
 async function handleAccountsSwitchLogin(e) {
   e.preventDefault();
   hideAuthError("accounts-switch-error");
-  const users = getUsers();
-  const user = users[accountSwitchTargetEmail];
-  const pass = val("accounts-switch-password");
-  if (!user || !(await verifyPassword(pass, user))) {
-    showAuthError("accounts-switch-error", "Senha incorreta.");
-    return;
-  }
+  const user = await authenticateUser(accountSwitchTargetEmail, val("accounts-switch-password"), "accounts-switch-error", "Senha incorreta.");
+  if (!user) return;
   accountSwitchTargetEmail = null;
   switchAccount(user.email);
 }
@@ -1126,11 +1289,23 @@ function addAccount() {
   switchAuthTab("signup");
 }
 
-// ── Remover conta do dispositivo ──────────────
-let accountPendingRemoval = null;
+// ── Confirmação de ação destrutiva (excluir/remover) ──────────────────
+// Os 5 fluxos de "pedir confirmação → excluir" do app (remover conta,
+// remover amigo, excluir exercício, excluir vídeo de exercício físico,
+// excluir fase) usavam cada um sua própria variável global só pra
+// guardar o alvo pendente, repetindo o mesmo par declaração+atribuição
+// cinco vezes — um único alvo compartilhado basta, já que só um modal
+// de confirmação fica aberto por vez (são todos bloqueantes).
+let pendingConfirmTarget = null;
+function requestConfirmAction(target, modalId) {
+  pendingConfirmTarget = target;
+  openModal(modalId);
+}
 
+// ── Remover conta do dispositivo ──────────────
 function removeAccountFromDevice(email) {
   const users = getUsers();
+  const removedUser = users[email];
   const changed = { [email]: null };
   // limpa referências (vínculos médico-paciente, convites, amizades) que
   // apontavam para a conta removida — só as contas realmente afetadas
@@ -1148,27 +1323,64 @@ function removeAccountFromDevice(email) {
     if (JSON.stringify(u) !== before) changed[u.email] = u;
   });
   saveUserRecords(changed);
+  // Nada da conta removida deve sobrar: mídia própria dela (vídeos de
+  // exercício, áudio de revisão do médico) e toda conversa em que ela
+  // participava — diferente de desfazer amizade (executeRemoveFriend),
+  // que mantém o histórico intacto de propósito.
+  if (removedUser) purgeUserOwnedMedia(removedUser);
+  purgeChatsAndMediaFor(email);
+}
+
+// Apaga do IndexedDB toda mídia própria de um usuário sendo removido do
+// dispositivo (vídeos de exercício físico do customContent, áudio de
+// tentativas na fila de revisão do médico). Áudio de pronúncia
+// personalizado (customContent.audio) é base64 embutido no próprio
+// JSON do usuário, não um blob — some sozinho junto com o registro.
+function purgeUserOwnedMedia(user) {
+  const cc = user.customContent || {};
+  (cc.physicalExercises || []).forEach(ex => { if (ex.mediaId) deleteMediaBlob(ex.mediaId); });
+  const reviews = (user.progress && user.progress.reviews) || [];
+  reviews.forEach(r => (r.attempts || []).forEach(a => { if (a.mediaId) deleteMediaBlob(a.mediaId); }));
+}
+
+// Apaga TODAS as conversas em que a conta removida participava, e cada
+// blob de mídia (foto/vídeo/áudio) que elas continham — sem tocar em
+// nenhuma conversa de outras contas. Só roda ao remover a conta do
+// dispositivo; desfazer amizade não apaga a conversa (ver
+// executeRemoveFriend).
+function purgeChatsAndMediaFor(email) {
+  const chats = getChats();
+  let changed = false;
+  Object.keys(chats).forEach(convId => {
+    if (!convId.split("::").includes(email)) return;
+    (chats[convId].messages || []).forEach(m => { if (m.mediaId) deleteMediaBlob(m.mediaId); });
+    delete chats[convId];
+    changed = true;
+  });
+  if (changed) {
+    try { localStorage.setItem("vozativa_chats", JSON.stringify(chats)); } catch (e) {}
+  }
 }
 
 // Sem argumento: remove a conta atualmente logada (usado pelo dropdown de perfil).
 // Com e-mail: remove uma conta específica (usado na lista "Trocar de conta").
 function requestRemoveAccount(email = sessionEmail) {
   if (!email) return;
-  accountPendingRemoval = email;
   closeDropdowns();
   const users = getUsers();
   const user = users[email];
   const label = user ? (user.name || user.email) : email;
   document.getElementById("remove-account-question").textContent =
     `Remover a conta de ${label} deste dispositivo? Os dados salvos localmente serão apagados.`;
-  openModal("remove-account-modal");
+  requestConfirmAction(email, "remove-account-modal");
 }
 
 function executeRemoveAccount() {
-  if (!accountPendingRemoval) { closeModal("remove-account-modal"); return; }
+  if (!pendingConfirmTarget) { closeModal("remove-account-modal"); return; }
+  const accountPendingRemoval = pendingConfirmTarget;
   const removingCurrent = accountPendingRemoval === sessionEmail;
   removeAccountFromDevice(accountPendingRemoval);
-  accountPendingRemoval = null;
+  pendingConfirmTarget = null;
   closeModal("remove-account-modal");
   playBeep(300, 0.12);
 
@@ -1255,21 +1467,11 @@ function goToFreshLogin() {
 async function handleAccountPickerLogin(e) {
   e.preventDefault();
   hideAuthError("account-picker-error");
-  const users = getUsers();
-  const user = users[accountPickerEmail];
-  const pass = val("account-picker-password");
-  if (!user || !(await verifyPassword(pass, user))) {
-    showAuthError("account-picker-error", "Senha incorreta.");
-    return;
-  }
-  sessionEmail = accountPickerEmail;
+  const email = accountPickerEmail;
+  const user = await authenticateUser(email, val("account-picker-password"), "account-picker-error", "Senha incorreta.");
+  if (!user) return;
   accountPickerEmail = null;
-  localStorage.setItem("vozativa_session_email", sessionEmail);
-  applyUserToUI(user);
-  document.getElementById("account-picker-password-view").reset();
-  playBeep(660, 0.12);
-  showOnlyScreen("home");
-  maybeStartHomeTour();
+  enterSessionAsUser(email, user, "account-picker-password-view");
 }
 
 // ══════════════════════════════════════════════
@@ -1283,7 +1485,7 @@ function cancelExit() {
 }
 function confirmExit() {
   window.close();
-  document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100dvh;font-family:'Nunito',sans-serif;color:#5a7a64;font-size:1.05rem;text-align:center;padding:24px;">Você pode fechar esta aba com segurança.</div>`;
+  document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100dvh;font-family:'Karla',sans-serif;color:#5a7a64;font-size:1.05rem;text-align:center;padding:24px;">Você pode fechar esta aba com segurança.</div>`;
 }
 
 // ══════════════════════════════════════════════
@@ -1307,7 +1509,7 @@ function saveUsers(users) {
     return true;
   } catch (e) {
     console.error("Falha ao salvar dados do VozAtiva:", e);
-    showToast("Não foi possível salvar: armazenamento do dispositivo está cheio.");
+    showToast("Não foi possível salvar: armazenamento do dispositivo está cheio.", true);
     return false;
   }
 }
@@ -1365,7 +1567,37 @@ function getProgress(user) {
   // Fila de aprovação do médico (ver registerPhaseReview) — uma entrada
   // por fase concluída, com as tentativas gravadas daquela fase.
   if (!user.progress.reviews) user.progress.reviews = [];
+  // Melhor % de acerto já alcançado em cada fase (groupId -> scorePct) —
+  // usado só pro RANKING (ver computeRankingScore), pra repetir uma fase
+  // fácil várias vezes não inflar a posição no ranking: cada fase conta
+  // uma única vez, pelo seu melhor resultado, não por tentativa. As
+  // estatísticas clínicas do médico (computePatientStats) continuam
+  // olhando todas as tentativas — repetição ali é informação legítima
+  // (ver G2 na auditoria).
+  if (!user.progress.groupBestScore) user.progress.groupBestScore = {};
+  // Fonemas rejeitados pelo médico (ver setReviewStatus) que precisam
+  // ser retreinados — populam o nível extra "Revisão" fora da trilha
+  // principal (ver G3 na auditoria).
+  if (!user.progress.rejectedFonemas) user.progress.rejectedFonemas = [];
+  // Fases/exercícios que o médico marcou manualmente como "repita" —
+  // independente de reprovação formal (ver configurável por médico).
+  if (!user.progress.repeatRequested) user.progress.repeatRequested = [];
   return user.progress;
+}
+
+// Pontuação usada SÓ no ranking de amigos — nunca inflada por repetir a
+// mesma fase fácil várias vezes (ver G2): cada fase conta uma única vez,
+// pelo melhor resultado já obtido nela, não por tentativa. Segmentado
+// por nível (ver computeLevel) antes de comparar pontuação, pra um
+// iniciante com 1-2 fases fáceis não aparecer acima de quem está muito
+// mais avançado no tratamento (ver G7).
+const LEVEL_RANK = { iniciante: 0, intermediario: 1, avancado: 2 };
+function computeRankingScore(user) {
+  const best = (user.progress && user.progress.groupBestScore) || {};
+  const scores = Object.values(best);
+  const avgBestScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  const groupsDone = ((user.progress && user.progress.completedGroupIds) || []).length;
+  return { levelRank: LEVEL_RANK[computeLevel(user)] || 0, avgBestScore, groupsDone };
 }
 
 // ── Sequência diária (streak) ──────────────────
@@ -1466,24 +1698,28 @@ function formatCrmInput(e) {
   e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);
 }
 
+// Entra de fato na sessão de um usuário já autenticado — compartilhado
+// entre login normal e escolha de conta salva (troca de conta usa
+// switchAccount, que tem navegação diferente de propósito: volta pro
+// painel de contas em vez de ir pra home).
+function enterSessionAsUser(email, user, formIdToReset) {
+  sessionEmail = email;
+  localStorage.setItem("vozativa_session_email", email);
+  applyUserToUI(user);
+  const form = document.getElementById(formIdToReset);
+  if (form) form.reset();
+  playBeep(660, 0.12);
+  showOnlyScreen("home");
+  maybeStartHomeTour();
+}
+
 async function handleLogin(e) {
   e.preventDefault();
   hideAuthError("login-error");
   const email = val("login-email").trim().toLowerCase();
-  const pass  = val("login-password");
-  const users = getUsers();
-  const user  = users[email];
-  if (!user || !(await verifyPassword(pass, user))) {
-    showAuthError("login-error", "E-mail ou senha incorretos.");
-    return;
-  }
-  sessionEmail = email;
-  localStorage.setItem("vozativa_session_email", email);
-  applyUserToUI(user);
-  document.getElementById("login-form").reset();
-  playBeep(660, 0.12);
-  showOnlyScreen("home");
-  maybeStartHomeTour();
+  const user = await authenticateUser(email, val("login-password"), "login-error", "E-mail ou senha incorretos.");
+  if (!user) return;
+  enterSessionAsUser(email, user, "login-form");
 }
 
 async function handleSignup(e) {
@@ -1737,7 +1973,7 @@ function sendFriendRequest(toEmail) {
 
   other.friendRequestsReceived.push({ fromEmail: sessionEmail, fromName: me.name, sentAt: Date.now() });
   me.friendRequestsSent.push(toEmail);
-  saveUserRecords({ [sessionEmail]: me, [toEmail]: other });
+  if (!saveUserRecords({ [sessionEmail]: me, [toEmail]: other })) return;
   playBeep(660, 0.1);
   renderHomeSearchResults();
 }
@@ -1795,9 +2031,18 @@ function respondFriendRequest(fromEmail, accept) {
   const users = getUsers();
   const me = users[sessionEmail];
   if (!me) return;
-  me.friendRequestsReceived = (me.friendRequestsReceived || []).filter(r => r.fromEmail !== fromEmail);
   const other = users[fromEmail];
-  if (other) other.friendRequestsSent = (other.friendRequestsSent || []).filter(e => e !== sessionEmail);
+  // Limpa o pedido nos DOIS sentidos, não só no que foi respondido — se
+  // as duas contas se convidaram quase ao mesmo tempo (uma antes de ver
+  // o convite da outra), aceitar ou recusar um lado deixava o outro
+  // sentido "pendente" pra sempre, mesmo já sendo amigos (ou já tendo
+  // recusado). Ver correção do pedido fantasma.
+  me.friendRequestsReceived = (me.friendRequestsReceived || []).filter(r => r.fromEmail !== fromEmail);
+  me.friendRequestsSent = (me.friendRequestsSent || []).filter(e => e !== fromEmail);
+  if (other) {
+    other.friendRequestsSent = (other.friendRequestsSent || []).filter(e => e !== sessionEmail);
+    other.friendRequestsReceived = (other.friendRequestsReceived || []).filter(r => r.fromEmail !== sessionEmail);
+  }
 
   if (accept) {
     if (!me.friends) me.friends = [];
@@ -1818,17 +2063,16 @@ function respondFriendRequest(fromEmail, accept) {
 }
 
 // ── Remover amigo ──────────────────────────────
-let friendPendingRemoval = null;
 function requestRemoveFriend(email) {
   const users = getUsers();
   const p = users[email];
-  friendPendingRemoval = email;
   document.getElementById("remove-friend-question").textContent =
     `Remover ${p ? p.name : "este amigo"} da sua lista de amigos?`;
-  openModal("remove-friend-modal");
+  requestConfirmAction(email, "remove-friend-modal");
 }
 function executeRemoveFriend() {
-  if (!friendPendingRemoval) { closeModal("remove-friend-modal"); return; }
+  if (!pendingConfirmTarget) { closeModal("remove-friend-modal"); return; }
+  const friendPendingRemoval = pendingConfirmTarget;
   const users = getUsers();
   const me = users[sessionEmail];
   const other = users[friendPendingRemoval];
@@ -1837,8 +2081,8 @@ function executeRemoveFriend() {
   const changed = {};
   if (me) changed[sessionEmail] = me;
   if (other) changed[friendPendingRemoval] = other;
-  saveUserRecords(changed);
-  friendPendingRemoval = null;
+  if (!saveUserRecords(changed)) return;
+  pendingConfirmTarget = null;
   closeModal("remove-friend-modal");
   playBeep(300, 0.1);
   renderFriendsPanel();
@@ -1856,20 +2100,32 @@ function updateFriendsBadge(user) {
 // Mensagem rápida e curta no rodapé da tela, usada para confirmações
 // leves (ex.: "agora são amigos").
 let toastTimer = null;
-function showToast(message) {
+// isError=true faz o aviso ficar na tela até a pessoa clicar "OK,
+// entendi" — usado pra mensagens de erro de verdade (armazenamento
+// cheio, microfone bloqueado, limite atingido), que não podem só
+// piscar e sumir sozinhas sem garantia nenhuma de que foram lidas.
+function showToast(message, isError) {
   let toast = document.getElementById("app-toast");
   if (!toast) {
     toast = document.createElement("div");
     toast.id = "app-toast";
-    toast.className = "app-toast";
     document.body.appendChild(toast);
   }
-  toast.textContent = message;
+  clearTimeout(toastTimer);
+  toast.className = "app-toast" + (isError ? " app-toast-error" : "");
+  toast.setAttribute("role", isError ? "alert" : "status");
+  toast.setAttribute("aria-live", isError ? "assertive" : "polite");
+  if (isError) {
+    toast.innerHTML = `<span class="app-toast-msg"></span><button type="button" class="app-toast-close">OK, entendi</button>`;
+    toast.querySelector(".app-toast-msg").textContent = message;
+    toast.querySelector(".app-toast-close").onclick = () => toast.classList.remove("show");
+  } else {
+    toast.textContent = message;
+  }
   toast.classList.remove("show");
   void toast.offsetWidth; // força reflow para reiniciar a transição
   toast.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove("show"), 2400);
+  if (!isError) toastTimer = setTimeout(() => toast.classList.remove("show"), 2400);
 }
 
 function openFriendsPanel() {
@@ -1926,23 +2182,25 @@ function renderFriendsAddResults() {
   matches.forEach(p => {
     const isFriend = (me.friends || []).includes(p.email);
     const isPending = (me.friendRequestsSent || []).includes(p.email);
+    // Dois controles irmãos (nunca um botão dentro de outro elemento
+    // clicável) — perfil e "Adicionar" são ações distintas com o mesmo
+    // peso, cada uma focável e anunciável por si só (ver A5 na auditoria).
     const row = document.createElement("div");
     row.className = "search-result-row";
     row.innerHTML = `
-      <div class="patient-card-avatar">${p.avatar ? `<img src="${p.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG}</div>
-      <div class="patient-card-info"><span class="patient-card-name">${escapeHtml(p.name)}</span><span class="patient-card-meta">ID ${escapeHtml(p.accountId)}</span></div>
+      <button type="button" class="search-result-profile-btn" aria-label="Ver perfil de ${escapeHtml(p.name)}">
+        <div class="patient-card-avatar">${p.avatar ? `<img src="${p.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG}</div>
+        <div class="patient-card-info"><span class="patient-card-name">${escapeHtml(p.name)}</span><span class="patient-card-meta">ID ${escapeHtml(p.accountId)}</span></div>
+      </button>
       <button type="button" class="search-result-add-btn"${isFriend || isPending ? " disabled" : ""}>${isFriend ? "Amigo" : isPending ? "Pendente" : "Adicionar"}</button>`;
+    row.querySelector(".search-result-profile-btn").onclick = () => openPublicProfile(p.email);
     if (!isFriend && !isPending) {
-      row.querySelector(".search-result-add-btn").onclick = (e) => {
-        e.stopPropagation();
+      row.querySelector(".search-result-add-btn").onclick = () => {
         sendFriendRequest(p.email);
         renderFriendsAddResults();
         renderFriendsPanel();
       };
     }
-    row.onclick = () => openPublicProfile(p.email);
-    row.setAttribute("aria-label", `Ver perfil de ${p.name}`);
-    makeKeyboardClickable(row);
     wrap.appendChild(row);
   });
 }
@@ -2046,12 +2304,15 @@ function renderLeaderboard() {
   const ids = [sessionEmail, ...((me.friends || []).filter(e => users[e]))];
   const ranked = ids.map(email => {
     const u = users[email];
-    const stats = computePatientStats(u);
-    return { email, name: u.name, avatar: u.avatar, groupsDone: stats.groupsDone, accuracyPct: stats.accuracyPct };
-    // Ranking por desempenho real (% de acerto), não por volume de fases
-    // concluídas — evita que alguém suba no ranking só por "correr" pela
-    // trilha sem acertar; fases concluídas entra como desempate.
-  }).sort((a, b) => b.accuracyPct - a.accuracyPct || b.groupsDone - a.groupsDone);
+    const rank = computeRankingScore(u);
+    return { email, name: u.name, avatar: u.avatar, groupsDone: rank.groupsDone, accuracyPct: rank.avgBestScore, levelRank: rank.levelRank };
+    // Ranking segmentado por nível primeiro (ver G7) — um iniciante com
+    // 1-2 fases fáceis em 100% nunca aparece acima de quem está muito
+    // mais avançado no tratamento. Dentro do mesmo nível, ordena pela
+    // média do MELHOR resultado de cada fase já concluída (não pela
+    // soma de tentativas — repetir uma fase fácil não muda nada aqui,
+    // ver G2), com fases concluídas como desempate final.
+  }).sort((a, b) => b.levelRank - a.levelRank || b.accuracyPct - a.accuracyPct || b.groupsDone - a.groupsDone);
 
   const wrap = document.getElementById("leaderboard-list");
   wrap.innerHTML = "";
@@ -2096,7 +2357,7 @@ function saveChatMessage(conversationId, message) {
   if (!chats[conversationId]) chats[conversationId] = { messages: [] };
   chats[conversationId].messages.push(message);
   try { localStorage.setItem("vozativa_chats", JSON.stringify(chats)); return true; }
-  catch (e) { showToast("Não foi possível enviar: armazenamento do dispositivo está cheio."); return false; }
+  catch (e) { showToast("Não foi possível enviar: armazenamento do dispositivo está cheio.", true); return false; }
 }
 function markConversationRead(conversationId, myEmail) {
   const chats = getChats();
@@ -2262,7 +2523,7 @@ function reminderSentToday(myEmail, contactEmail) {
 function openChatReminderPrompt() {
   if (!activeChatContact || !sessionEmail) return;
   if (reminderSentToday(sessionEmail, activeChatContact)) {
-    showToast("Você já enviou um lembrete para essa pessoa hoje — tente de novo amanhã.");
+    showToast("Você já enviou um lembrete para essa pessoa hoje — tente de novo amanhã.", true);
     return;
   }
   document.getElementById("chat-reminder-input").value = "";
@@ -2273,7 +2534,7 @@ function sendChatReminder() {
   if (!text || !activeChatContact || !sessionEmail) return;
   if (reminderSentToday(sessionEmail, activeChatContact)) {
     closeModal("chat-reminder-modal");
-    showToast("Você já enviou um lembrete para essa pessoa hoje — tente de novo amanhã.");
+    showToast("Você já enviou um lembrete para essa pessoa hoje — tente de novo amanhã.", true);
     return;
   }
   const message = { id: newMediaId(), from: sessionEmail, type: "reminder", text, done: false, createdAt: Date.now(), readBy: [sessionEmail] };
@@ -2363,9 +2624,9 @@ function handleChatMediaSelect(input) {
   if (!file || !activeChatContact || !sessionEmail) return;
   const isPhoto = file.type.startsWith("image/");
   const isVideo = file.type.startsWith("video/");
-  if (!isPhoto && !isVideo) { showToast("Envie uma imagem ou um vídeo."); return; }
+  if (!isPhoto && !isVideo) { showToast("Envie uma imagem ou um vídeo.", true); return; }
   const maxBytes = isPhoto ? CHAT_PHOTO_MAX_BYTES : CHAT_VIDEO_MAX_BYTES;
-  if (file.size > maxBytes) { showToast(`Arquivo muito grande (máx. ${Math.round(maxBytes / 1024 / 1024)}MB).`); return; }
+  if (file.size > maxBytes) { showToast(`Arquivo muito grande (máx. ${Math.round(maxBytes / 1024 / 1024)}MB).`, true); return; }
   pendingChatMediaFile = file;
   const url = URL.createObjectURL(file);
   document.getElementById("chat-media-preview-content").innerHTML = isPhoto
@@ -2389,7 +2650,7 @@ async function confirmSendChatMedia() {
   setBtnLoading(btn, true);
   const blobId = newMediaId();
   try { await saveMediaBlob(blobId, file); }
-  catch (e) { setBtnLoading(btn, false); showToast("Não foi possível enviar este arquivo."); return; }
+  catch (e) { setBtnLoading(btn, false); showToast("Não foi possível enviar este arquivo.", true); return; }
   const message = { id: newMediaId(), from: sessionEmail, type: isPhoto ? "photo" : "video", mediaId: blobId, mediaMime: file.type, createdAt: Date.now(), readBy: [sessionEmail] };
   saveChatMessage(chatConversationId(sessionEmail, activeChatContact), message);
   setBtnLoading(btn, false);
@@ -2411,10 +2672,10 @@ async function toggleChatAudioRecording() {
   if (chatRecorder && chatRecorder.state === "recording") { chatRecorder.stop(); return; }
   let stream;
   try { stream = (micStream && micStream.getTracks().some(t => t.readyState === "live")) ? micStream : await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); }
-  catch (e) { showToast("Não foi possível acessar o microfone."); return; }
+  catch (e) { showToast("Não foi possível acessar o microfone.", true); return; }
   chatRecorderChunks = [];
   try { chatRecorder = new MediaRecorder(stream); }
-  catch (e) { showToast("Gravação de áudio não é suportada neste navegador."); return; }
+  catch (e) { showToast("Gravação de áudio não é suportada neste navegador.", true); return; }
   chatRecorder.ondataavailable = e => { if (e.data.size) chatRecorderChunks.push(e.data); };
   chatRecorder.onstop = () => {
     btn.classList.remove("active");
@@ -2453,7 +2714,7 @@ async function confirmSendChatAudio() {
   setBtnLoading(btn, true);
   const blobId = newMediaId();
   try { await saveMediaBlob(blobId, blob); }
-  catch (e) { setBtnLoading(btn, false); showToast("Não foi possível salvar o áudio."); return; }
+  catch (e) { setBtnLoading(btn, false); showToast("Não foi possível salvar o áudio.", true); return; }
   const message = { id: newMediaId(), from: sessionEmail, type: "audio", mediaId: blobId, mediaMime: blob.type, durationSec, createdAt: Date.now(), readBy: [sessionEmail] };
   saveChatMessage(chatConversationId(sessionEmail, activeChatContact), message);
   setBtnLoading(btn, false);
@@ -2862,22 +3123,43 @@ function closeWelcomeOverlay() {
 // ══════════════════════════════════════════════
 // TOUR GUIADO (spotlight)
 // ══════════════════════════════════════════════
+// Cada texto termina dizendo o que vai acontecer/onde a pessoa vai
+// parar DEPOIS de tocar — não só o que o botão é (ver UX1 na
+// auditoria: ninguém devia terminar um passo do tour sem saber pra
+// onde vai). Tours separados por papel (paciente/médico), já que os
+// dois têm telas e objetivos bem diferentes.
 const TOUR_STEPS = {
   home: [
-    { el: "#profile-btn",  text: "Toque aqui para editar seu perfil: nome, foto, telefone e mais." },
-    { el: "#settings-btn", text: "Aqui você ajusta som e notificações. O tema claro/escuro fica no botão do cabeçalho em qualquer tela." },
-    { el: ".home-start",   text: "Toque para iniciar sua jornada de treino de fala." },
+    { el: "#profile-btn",  text: "Toque aqui pra abrir seu perfil — nome, foto, telefone. Um menu se abre com essas opções." },
+    { el: "#settings-btn", text: "Aqui ficam som, notificações e créditos. O tema claro/escuro fica sempre no botão de lua/sol, em qualquer tela." },
+    { el: ".home-start",   text: "Toque aqui pra começar a treinar agora — você vai direto pra sua trilha de fases." },
+  ],
+  homeMedico: [
+    { el: "#profile-btn",  text: "Toque aqui pra abrir seu perfil — nome, foto, telefone. Um menu se abre com essas opções." },
+    { el: "#settings-btn", text: "Aqui ficam som, notificações e créditos. O tema claro/escuro fica sempre no botão de lua/sol, em qualquer tela." },
+    { el: ".home-start",   text: "Toque aqui pra abrir o Painel do Médico — é lá que você acompanha e adiciona pacientes." },
   ],
   path: [
-    { el: ".path-node.unlocked, .path-node.completed", text: "Cada nó é uma fase. Toque em um nó desbloqueado para treinar aquele grupo de fonemas." },
+    { el: ".remedial-node", text: "Este card mostra fonemas que você mesmo(a) precisa retreinar, quando seu fonoaudiólogo pede uma repetição. Fica apagado e sem função enquanto não há nada pendente." },
+    { el: ".path-node.unlocked, .path-node.completed", text: "Cada nó é uma fase. Toque num nó desbloqueado (colorido) pra começar a treinar aqueles fonemas — um pulou de ilha desbloqueia a próxima." },
   ],
   app: [
-    { el: "#screen-app .back-btn", text: "Volte para a trilha de fases quando quiser." },
-    { el: "#gender-btn",         text: "Escolha a voz que pronuncia os fonemas: feminina (rosa) ou masculina (azul)." },
-    { el: "#help-btn",           text: "Precisa de ajuda? Toque aqui para ver dicas a qualquer momento." },
-    { el: "#phoneme-audio-btn",  text: "Toque para ouvir a pronúncia correta do fonema." },
-    { el: ".waveform-wrapper",   text: "Sua voz aparece aqui em tempo real. Basta gravar — o reconhecimento é automático." },
-    { el: "#btn-record",         text: "Grave sua voz tentando repetir o fonema mostrado. Assim que houver um match, a fase avança sozinha." },
+    { el: "#screen-app .back-btn", text: "Toque aqui pra voltar pra trilha de fases a qualquer momento, sem perder o que já foi respondido nesta fase." },
+    { el: "#gender-btn",         text: "Toque pra trocar a voz que pronuncia os fonemas entre feminina (rosa) e masculina (azul)." },
+    { el: "#help-btn",           text: "Ficou com dúvida? Toque aqui pra abrir a Central de Ajuda a qualquer momento, inclusive sobre como funciona a revisão do fonoaudiólogo." },
+    { el: "#phoneme-audio-btn",  text: "Toque pra ouvir como esse fonema deve soar antes de gravar sua voz." },
+    { el: ".waveform-wrapper",   text: "Sua voz aparece aqui em tempo real assim que você grava — dá pra ver se o som está sendo captado." },
+    { el: "#btn-record",         text: "Toque aqui pra gravar e diga o fonema mostrado — não precisa tocar de novo pra parar, o reconhecimento avança sozinho assim que reconhece sua fala." },
+  ],
+  // Painel do médico — tela de lista de pacientes (ver openDoctorScreen).
+  doctorPanel: [
+    { el: "#add-patient-id",       text: "Digite o ID de 4 dígitos do paciente aqui e toque em Adicionar — ele recebe um convite e precisa aceitar antes de aparecer vinculado." },
+    { el: ".patient-card",         text: "Toque no card de um paciente pra ver o progresso completo dele, fase por fase." },
+  ],
+  // Painel do médico — detalhe de um paciente (ver openPatientDetail).
+  doctorDetail: [
+    { el: "#detail-reviews-list",  text: "Aqui aparecem as fases que o paciente concluiu, com o áudio de cada tentativa — ouça e toque Aprovar ou Rejeitar. Rejeitar manda aqueles fonemas de volta pro paciente treinar de novo, num nível separado." },
+    { el: "#detail-error-bars",    text: "Fonemas com erro recorrente aparecem aqui — toque em \"Pedir repetição\" pra mandar um fonema específico direto pro paciente treinar de novo, mesmo sem uma revisão pendente." },
   ],
 };
 let tourStepIndex = 0;
@@ -2992,11 +3274,21 @@ function endTour() {
   window.removeEventListener("resize", repositionTourStep);
   currentTourKey = null;
 }
+function isCurrentUserDoctor() {
+  if (!sessionEmail) return false;
+  const u = getUsers()[sessionEmail];
+  return !!(u && u.role === "medico");
+}
+
 function replayTour() {
   closePanel("help-panel");
-  let key = "home";
+  let key = isCurrentUserDoctor() ? "homeMedico" : "home";
   if (!screenApp.classList.contains("hidden")) key = "app";
   else if (!screenPath.classList.contains("hidden")) key = "path";
+  else if (!screenDoctor.classList.contains("hidden")) {
+    const detailOpen = document.getElementById("doctor-detail-view") && !document.getElementById("doctor-detail-view").classList.contains("hidden");
+    key = detailOpen ? "doctorDetail" : "doctorPanel";
+  }
   startTour(key);
 }
 // Nenhum tour começa por cima das boas-vindas nem da tela de permissão de
@@ -3010,13 +3302,27 @@ function tourBlockedByOtherOverlay() {
   return (welcome && !welcome.classList.contains("hidden")) || !permOverlay.classList.contains("hidden");
 }
 function maybeStartHomeTour() {
-  if (!localStorage.getItem("vozativa_tour_home_seen")) {
-    setTimeout(() => { if (!screenHome.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("home"); }, 600);
+  const key = isCurrentUserDoctor() ? "homeMedico" : "home";
+  if (!localStorage.getItem("vozativa_tour_" + key + "_seen")) {
+    setTimeout(() => { if (!screenHome.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour(key); }, 600);
   }
 }
 function maybeStartPathTour() {
   if (!localStorage.getItem("vozativa_tour_path_seen")) {
     setTimeout(() => { if (!screenPath.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("path"); }, 500);
+  }
+}
+// Painel do médico nunca tinha tour nenhum antes (ver UX1 na auditoria)
+// — o médico entrava direto sem nenhuma orientação de onde adicionar
+// pacientes ou o que cada card mostra.
+function maybeStartDoctorPanelTour() {
+  if (!localStorage.getItem("vozativa_tour_doctorPanel_seen")) {
+    setTimeout(() => { if (!screenDoctor.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("doctorPanel"); }, 500);
+  }
+}
+function maybeStartDoctorDetailTour() {
+  if (!localStorage.getItem("vozativa_tour_doctorDetail_seen")) {
+    setTimeout(() => { if (!screenDoctor.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("doctorDetail"); }, 500);
   }
 }
 function maybeStartAppTour() {
@@ -3028,6 +3334,7 @@ function resumePendingTourAfterMic() {
   if (!screenHome.classList.contains("hidden")) maybeStartHomeTour();
   else if (!screenPath.classList.contains("hidden")) maybeStartPathTour();
   else if (!screenApp.classList.contains("hidden")) maybeStartAppTour();
+  else if (!screenDoctor.classList.contains("hidden")) maybeStartDoctorPanelTour();
 }
 
 // ══════════════════════════════════════════════
@@ -3039,6 +3346,20 @@ window.addEventListener("resize", () => {
   if (pathResizeRaf) cancelAnimationFrame(pathResizeRaf);
   pathResizeRaf = requestAnimationFrame(() => renderPathTree());
 });
+
+// Uma fase sem nenhum exercício (grupo customizado recém-criado, antes
+// do médico adicionar conteúdo) nunca é jogável nem conta como
+// "anterior" pra desbloquear a próxima — senão ela travaria toda a
+// trilha depois dela pra sempre. Ver F1 na auditoria.
+function isPlayableGroup(g) { return !!(g && g.fonemas && g.fonemas.length); }
+function isGroupUnlocked(gi, progress) {
+  if (progress.completedGroupIds.includes(grupos[gi].id)) return true;
+  for (let i = gi - 1; i >= 0; i--) {
+    if (!isPlayableGroup(grupos[i])) continue;
+    return progress.completedGroupIds.includes(grupos[i].id);
+  }
+  return true; // nenhuma fase anterior tem conteúdo — a primeira fase jogável libera
+}
 
 function renderPathTree(introAnimation, celebrateIndex) {
   const tree = document.getElementById("path-tree");
@@ -3060,7 +3381,8 @@ function renderPathTree(introAnimation, celebrateIndex) {
     // antes dela na ordem (o médico pode inserir tarefas entre fases já
     // concluídas a qualquer momento) — sem isso, a fase concluída ficava
     // com o ícone de check mas desabilitada (clique não fazia nada).
-    const unlocked = completed || gi === 0 || progress.completedGroupIds.includes(grupos[gi - 1].id);
+    const playable = isPlayableGroup(g);
+    const unlocked = playable && isGroupUnlocked(gi, progress);
     if (completed) doneCount++;
     // Fase personalizada (grupo/exercício adicionado pelo médico) ainda
     // não concluída: ícone azul + selo "i". Uma vez concluída, vira um nó
@@ -3068,17 +3390,18 @@ function renderPathTree(introAnimation, celebrateIndex) {
     const pendingCustom = intervention.has(g.id) && !completed;
     const node = document.createElement("button");
     node.type = "button";
-    node.className = "path-node " + aligns[gi % 3] + " " + (completed ? "completed" : unlocked ? "unlocked" : "locked")
+    node.className = "path-node " + aligns[gi % 3] + " " + (!playable ? "locked" : completed ? "completed" : unlocked ? "unlocked" : "locked")
       + (pendingCustom ? " has-intervention" : "");
     node.dataset.gi = gi;
     node.disabled = !unlocked;
+    if (!playable) node.title = "O fonoaudiólogo ainda não adicionou exercícios a esta fase.";
     node.onclick = () => startPhase(gi);
     node.innerHTML = `
       <span class="path-node-circle-wrap">
         <span class="path-node-circle">${completed ? CHECK_SVG : unlocked ? (gi + 1) : LOCK_SVG}</span>
         ${pendingCustom ? '<span class="path-node-badge" title="Fase com exercícios adicionados pelo fonoaudiólogo">i</span>' : ""}
       </span>
-      <span class="path-node-label">${escapeHtml(g.nome)}</span>`;
+      <span class="path-node-label">${escapeHtml(g.nome)}${!playable ? ' <em>(sem exercícios)</em>' : ""}</span>`;
     if (introAnimation) {
       // gi=0 é o nó mais embaixo (Vogais); o nó mais alto (último grupo)
       // deve "chegar" primeiro na animação de cima para baixo.
@@ -3098,19 +3421,52 @@ function renderPathTree(introAnimation, celebrateIndex) {
   });
   document.getElementById("path-progress-indicator").textContent = `${doneCount} de ${grupos.length} fases`;
 
-  // Ao voltar de uma fase concluída (celebrateIndex vem de backToPath()),
-  // rola automaticamente até a próxima fase — ou até a fase que acabou de
-  // ser concluída, se for a última da trilha e não houver "próxima" pra
-  // rolar até. Feito ANTES de renderPathConnectors() porque esta insere o
-  // SVG de conectores como primeiro filho de #path-tree, o que deslocaria
-  // os índices se a busca fosse por posição em vez de data-gi.
-  if (celebrateIndex !== undefined) {
-    const targetIndex = Math.min(celebrateIndex, total - 1);
-    const targetNode = tree.querySelector(`[data-gi="${targetIndex}"]`);
-    if (targetNode) targetNode.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
-  }
-
   renderPathConnectors(progress, intervention);
+  renderRemedialNode(progress);
+
+  // Rola automaticamente até a fase atual (a próxima não concluída) toda
+  // vez que a trilha é exibida — não só ao voltar de uma fase recém-
+  // concluída (celebrateIndex). Sem isso, a tela sempre abria no topo,
+  // obrigando a pessoa a procurar manualmente onde parou. Roda DEPOIS de
+  // renderPathConnectors/renderRemedialNode (que ainda mexem no layout
+  // do próprio #path-tree) e dentro de requestAnimationFrame, pra medir
+  // a posição só depois que o navegador realmente aplicou esse layout —
+  // nunca antes dos elementos existirem/estarem no lugar final.
+  const scrollTargetIndex = celebrateIndex !== undefined ? Math.min(celebrateIndex, total - 1) : computeCurrentPhaseIndex(progress);
+  requestAnimationFrame(() => {
+    const targetNode = tree.querySelector(`[data-gi="${scrollTargetIndex}"]`);
+    if (targetNode) targetNode.scrollIntoView({ behavior: reducedMotion || introAnimation ? "auto" : "smooth", block: "center" });
+    // Rolagem "auto"/instantânea às vezes não dispara um evento scroll
+    // a tempo do próximo frame — sincroniza direto aqui também, o
+    // listener de scroll cobre o resto durante uma rolagem "smooth".
+    syncPathHeaderPosition();
+  });
+}
+
+// A "fase atual" pra fins de rolagem automática: a primeira fase jogável
+// ainda não concluída (onde a pessoa realmente vai continuar) — ou a
+// última da trilha, se tudo já estiver concluído.
+function computeCurrentPhaseIndex(progress) {
+  for (let i = 0; i < grupos.length; i++) {
+    if (isPlayableGroup(grupos[i]) && !progress.completedGroupIds.includes(grupos[i].id)) return i;
+  }
+  return Math.max(0, grupos.length - 1);
+}
+
+// Nível de Revisão (ver G3 na auditoria) — apagado/inclicável sem nada
+// pendente, colorido/clicável assim que o médico rejeita alguma
+// aprovação. Fica fora de #path-tree de propósito (não é um nó da
+// árvore de fases, ver startRemedialPhase).
+function renderRemedialNode(progress) {
+  const node = document.getElementById("remedial-node");
+  const meta = document.getElementById("remedial-node-meta");
+  if (!node || !meta) return;
+  const count = uniqueRejectedFonemas(progress).length;
+  node.disabled = count === 0;
+  node.classList.toggle("has-items", count > 0);
+  meta.textContent = count === 0
+    ? "Nada pendente por enquanto"
+    : `${count} fonema${count > 1 ? "s" : ""} pra rever`;
 }
 
 // Desenha linhas conectando cada nó ao próximo, seguindo a posição real
@@ -3168,12 +3524,16 @@ function renderPathConnectors(progress, intervention) {
 function startPhase(gi) {
   const users = getUsers();
   const user = users[sessionEmail];
-  if (!user || !grupos[gi]) return;
+  // Fase sem nenhum exercício não pode ser aberta — impede a tela de
+  // treino de quebrar com "undefined" quando o médico cria um grupo
+  // customizado antes de adicionar conteúdo a ele (ver F1 na auditoria).
+  if (!user || !grupos[gi] || !isPlayableGroup(grupos[gi])) return;
   const progress = getProgress(user);
-  const completed = progress.completedGroupIds.includes(grupos[gi].id);
-  const unlocked = completed || gi === 0 || progress.completedGroupIds.includes(grupos[gi - 1].id);
-  if (!unlocked) return;
+  if (!isGroupUnlocked(gi, progress)) return;
 
+  releasePendingPhaseAttempts();
+  phaseSkipsUsed = 0;
+  phaseAttemptCommitted = false;
   phaseGroupIndex = gi;
   phaseStartIndex = fonemaGrupo.indexOf(gi);
   let endIdx = phaseStartIndex;
@@ -3182,6 +3542,7 @@ function startPhase(gi) {
   currentIndex = phaseStartIndex;
   phaseSegmentStatus = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
   phaseAttemptMediaIds = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
+  phaseAttemptVerified = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
   phaseTotal.textContent = phaseEndIndex - phaseStartIndex + 1;
   statTotal.textContent  = phaseEndIndex - phaseStartIndex + 1;
 
@@ -3210,6 +3571,10 @@ function registerPhaseAttempt(groupId, scorePct) {
   if (scorePct >= PHASE_COMPLETION_THRESHOLD && !progress.completedGroupIds.includes(groupId)) {
     progress.completedGroupIds.push(groupId);
   }
+  // Só pro ranking (ver computeRankingScore) — guarda o MELHOR resultado
+  // já obtido nesta fase, nunca soma por tentativa, pra repetir uma fase
+  // fácil não inflar a posição no ranking (ver G2 na auditoria).
+  progress.groupBestScore[groupId] = Math.max(progress.groupBestScore[groupId] || 0, scorePct);
   registerStreakForToday(progress);
   saveUserRecords({ [sessionEmail]: user });
 }
@@ -3230,7 +3595,8 @@ function registerPhaseReview(group, scorePct) {
   const attempts = groupFonemas.map((f, i) => ({
     fonema: f,
     status: phaseSegmentStatus[i] || "skipped",
-    mediaId: phaseAttemptMediaIds[i] || null
+    mediaId: phaseAttemptMediaIds[i] || null,
+    verified: !!phaseAttemptVerified[i]
   }));
   // Sem nenhum áudio gravado nesta fase (tudo pulado, ou microfone
   // bloqueado o tempo todo) não há nada pro médico ouvir/validar.
@@ -3389,6 +3755,10 @@ function flashSuccess(correct) {
     : `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
   badge.classList.remove("hidden");
   requestAnimationFrame(() => badge.classList.add("show"));
+  // O ícone é só visual (aria-hidden) — quem usa leitor de tela precisa
+  // ouvir o resultado da tentativa de algum jeito (ver A3 na auditoria).
+  const announce = document.getElementById("recording-result-announce");
+  if (announce) announce.textContent = isWrong ? "Errado" : "Certo";
 }
 function animateCardEnter() {
   mainCard.classList.remove("challenge-enter");
@@ -3401,17 +3771,19 @@ function prevChallenge() {
   if (isRecording) stopAudio();
   if (currentIndex > phaseStartIndex) { currentIndex--; loadChallenge(); playBeep(400, 0.08); }
 }
-function skippedCountInPhase() {
-  return phaseSegmentStatus.filter(s => s === "skipped").length;
-}
 // Limite de pulos por fase — vale para todas, inclusive fases
-// personalizadas do médico, sem exceção de tamanho.
+// personalizadas do médico, sem exceção de tamanho. Usa phaseSkipsUsed
+// (contador que só sobe) em vez de contar quantos segmentos estão
+// "skipped" AGORA — essa contagem baixava se o paciente voltasse com
+// "Desafio anterior" e respondesse um pulado, reabrindo uma vaga de
+// pulo indefinidamente (ver F6 na auditoria).
 function skipChallenge() {
-  if (skippedCountInPhase() >= SKIP_LIMIT_PER_PHASE) return;
+  if (phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) return;
   if (isRecording) stopAudio();
   phaseSegmentStatus[currentIndex - phaseStartIndex] = "skipped";
+  phaseSkipsUsed++;
   playBeep(480, 0.08);
-  if (skippedCountInPhase() >= SKIP_LIMIT_PER_PHASE) {
+  if (phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) {
     showToast("Limite de 3 pulos nesta fase — os próximos exercícios precisam ser respondidos.");
   }
   advance();
@@ -3419,7 +3791,7 @@ function skipChallenge() {
 function updateSkipButtonState() {
   const skipBtn = document.getElementById("btn-skip");
   if (!skipBtn) return;
-  const reachedLimit = skippedCountInPhase() >= SKIP_LIMIT_PER_PHASE;
+  const reachedLimit = phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE;
   skipBtn.disabled = reachedLimit;
   skipBtn.title = reachedLimit ? "Limite de 3 pulos nesta fase já foi usado" : "";
 }
@@ -3551,11 +3923,21 @@ function clearRecordingTimers() {
 
 async function startAudio() {
   if (!micStream || micStream.getTracks().every(t => t.readyState === "ended")) {
+    // Se micGranted já era true, isto é uma RE-tentativa (a permissão que
+    // já tínhamos foi perdida de algum jeito — revogada pelo usuário, pelo
+    // navegador ou pelo sistema) — mensagem diferente da primeira vez,
+    // pra deixar claro que algo mudou, não que é a primeira vez pedindo.
+    const wasPreviouslyGranted = micGranted;
     try { micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); micGranted = true; micDenied = false; }
     catch(e) {
       micDenied = true;
       updateMicBlockedUI();
-      showToast("Não foi possível acessar o microfone.");
+      showToast(
+        wasPreviouslyGranted
+          ? "O acesso ao microfone foi revogado. Ative-o de novo nas permissões do navegador para continuar treinando com sua voz."
+          : "Não foi possível acessar o microfone.",
+        true
+      );
       return;
     }
   }
@@ -3571,17 +3953,30 @@ async function startAudio() {
     mediaRecorder.start();
   } catch (e) { mediaRecorder = null; }
 
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  analyser = audioCtx.createAnalyser();
-  // smoothingTimeConstant mais baixo = a barra reage mais rápido ao volume
-  // real (menos "atraso" visual e na detecção do fim da fala).
-  analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.35;
-  // GainNode amplifica o sinal do microfone antes da análise — ajuda a
-  // captar vozes mais baixas ou em ambientes com um pouco de ruído, sem
-  // exigir nenhuma configuração manual do paciente.
-  const micGain = audioCtx.createGain();
-  micGain.gain.value = MIC_GAIN;
-  audioCtx.createMediaStreamSource(micStream).connect(micGain).connect(analyser);
+  // Reaproveita o MESMO AudioContext entre exercícios em vez de fechar e
+  // recriar um a cada tentativa — fechar um AudioContext ligado à mesma
+  // faixa de microfone repetidamente é o gatilho mais comum pra o
+  // navegador derrubar a sessão de captura por trás dos panos, fazendo o
+  // getUserMedia seguinte pedir permissão de novo (era isso que fazia a
+  // permissão de microfone ser solicitada a cada exercício). Só recria
+  // se realmente não existir um contexto vivo, ou se o stream mudou
+  // (ex.: paciente negou e depois reativou o microfone no meio do treino).
+  if (!audioCtx || audioCtx.state === "closed" || audioGraphStream !== micStream) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    // smoothingTimeConstant mais baixo = a barra reage mais rápido ao volume
+    // real (menos "atraso" visual e na detecção do fim da fala).
+    analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.35;
+    // GainNode amplifica o sinal do microfone antes da análise — ajuda a
+    // captar vozes mais baixas ou em ambientes com um pouco de ruído, sem
+    // exigir nenhuma configuração manual do paciente.
+    const micGain = audioCtx.createGain();
+    micGain.gain.value = MIC_GAIN;
+    audioCtx.createMediaStreamSource(micStream).connect(micGain).connect(analyser);
+    audioGraphStream = micStream;
+  } else if (audioCtx.state === "suspended") {
+    await audioCtx.resume();
+  }
   dataArray = new Uint8Array(analyser.fftSize);
   isRecording = true;
   recordingPeak = 0;
@@ -3616,9 +4011,14 @@ function stopAudio() {
   isRecording = false;
   clearRecordingTimers();
   stopSpeechRecognition();
-  if (rafId)   { cancelAnimationFrame(rafId); rafId = null; }
-  if (audioCtx){ audioCtx.close().catch(() => {}); audioCtx = null; }
-  analyser = null; dataArray = null;
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  // NÃO fecha o AudioContext nem larga o analyser aqui — eles são
+  // reaproveitados entre exercícios (ver startAudio). Fechar e recriar
+  // isso a cada tentativa era a causa real da permissão de microfone
+  // sendo pedida de novo a cada exercício. Só suspende (pausa o
+  // processamento, sem derrubar a captura) pra economizar recursos
+  // enquanto não há gravação em andamento.
+  if (audioCtx && audioCtx.state === "running") audioCtx.suspend().catch(() => {});
   // Se chegou até aqui sem passar por stopAudioRecordingForReview (fonema
   // pulado ou tela abandonada no meio de uma gravação), descarta a
   // gravação em andamento sem salvar nada — só tentativas confirmadas via
@@ -3747,14 +4147,58 @@ function updateSustainProgressUI(streakMs, targetMs) {
 function stopAudioRecordingForReview(segIdx) {
   if (!mediaRecorder || mediaRecorder.state === "inactive") { mediaRecorder = null; return; }
   const rec = mediaRecorder, chunks = currentAttemptChunks;
+  const myGeneration = phaseAttemptGeneration;
+  const myGroupIndex = phaseGroupIndex;
   mediaRecorder = null;
   rec.onstop = () => {
     if (!chunks.length) return;
     const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
     const id = newMediaId();
-    saveMediaBlob(id, blob).then(() => { phaseAttemptMediaIds[segIdx] = id; }).catch(() => {});
+    saveMediaBlob(id, blob).then(() => {
+      // Se a fase foi reiniciada/abandonada enquanto isto salvava, essa
+      // geração já não existe mais — descarta em vez de escrever o id
+      // velho num array que já é de outra tentativa (ver T2/F2).
+      if (myGeneration !== phaseAttemptGeneration) { deleteMediaBlob(id); return; }
+      phaseAttemptMediaIds[segIdx] = id;
+      // Corrida rara: a revisão da fase já foi criada (finishPhase rodou)
+      // antes deste salvamento terminar — o registro persistido já existe
+      // com mediaId nulo pra este índice; corrige direto nele também,
+      // pra o áudio não ficar sem dono nenhum (ver F2).
+      if (phaseAttemptCommitted) attachMediaToCommittedReview(myGroupIndex, segIdx, id);
+    }).catch(() => {});
   };
   try { rec.stop(); } catch(e) {}
+}
+
+// Anexa um áudio que terminou de salvar DEPOIS que a revisão da fase já
+// foi persistida (ver stopAudioRecordingForReview) — busca a revisão
+// pendente mais recente daquele grupo cujo attempt naquele índice ainda
+// não tem mediaId, e completa.
+function attachMediaToCommittedReview(groupIndex, segIdx, mediaId) {
+  if (!sessionEmail || !grupos[groupIndex]) return;
+  const users = getUsers();
+  const user = users[sessionEmail];
+  if (!user) return;
+  const progress = getProgress(user);
+  const review = (progress.reviews || []).find(r =>
+    r.groupId === grupos[groupIndex].id && r.status === "pendente" &&
+    r.attempts[segIdx] && !r.attempts[segIdx].mediaId
+  );
+  if (!review) { deleteMediaBlob(mediaId); return; }
+  review.attempts[segIdx].mediaId = mediaId;
+  saveUserRecords({ [sessionEmail]: user });
+}
+
+// Libera (apaga do IndexedDB) qualquer áudio de tentativa já gravado na
+// fase atual que nunca chegou a entrar numa revisão do médico — chamado
+// sempre que uma tentativa de fase é abandonada ou reiniciada
+// (startPhase, restartPhase, backToPath), pra nenhuma gravação órfã
+// sobreviver a "Voltar"/"Tentar novamente" (ver T2 na auditoria).
+function releasePendingPhaseAttempts() {
+  if (!phaseAttemptCommitted) {
+    phaseAttemptMediaIds.forEach(id => { if (id) releaseMediaBlob(id); });
+  }
+  phaseAttemptGeneration++;
 }
 
 // Confirma e encerra a gravação (chamado automaticamente pelo match
@@ -3762,16 +4206,130 @@ function stopAudioRecordingForReview(segIdx) {
 function finishRecording(correct) {
   if (!isRecording) return;
   const fonema = desafios[currentIndex];
+  // Só é "verificado por voz de verdade" quando o reconhecimento de fala
+  // real deu o resultado — som sustentado e o heurístico de volume/duração
+  // (reserva quando o reconhecimento não respondeu a tempo) não confirmam
+  // que o som era o fonema certo, só volume e tempo (ver G1 na auditoria).
+  const verified = sustainTargetMs === 0 && recognitionOutcome !== null;
   stopAudioRecordingForReview(currentIndex - phaseStartIndex);
   stopAudio();
   playBeep(correct ? 620 : 460, 0.1);
   flashSuccess(correct);
   phaseSegmentStatus[currentIndex - phaseStartIndex] = correct ? "correct" : "incorrect";
+  phaseAttemptVerified[currentIndex - phaseStartIndex] = verified;
   registerAttempt(fonema, correct);
   // Espera só o suficiente pra animação do selo de acerto/erro (.3s) ser
   // percebida antes de avançar — reduzido de 550ms para diminuir a demora
   // depois que o paciente já terminou de responder.
   setTimeout(() => advance(), 380);
+}
+
+// ══════════════════════════════════════════════
+// NÍVEL DE REVISÃO — fonemas rejeitados pelo médico (ver G3 na auditoria)
+// ──────────────────────────────────────────────
+// Um nó separado na trilha, fora da cadeia normal de fases: nunca
+// bloqueia nem desbloqueia nada, começa apagado/inclicável e só fica
+// colorido/clicável quando há pelo menos um fonema rejeitado esperando
+// nova tentativa. Reaproveita a MESMA tela de treino (loadChallenge,
+// toggleRecording, etc.) trocando temporariamente grupos/desafios por um
+// grupo sintético — sem nunca gravar nada em completedGroupIds, no
+// ranking ou na fila de aprovação do médico, porque não é uma fase real.
+// ══════════════════════════════════════════════
+let isRemedialMode = false;
+let savedGrupos = null, savedDesafios = null, savedFonemaGrupo = null, savedFonemaLocal = null;
+
+function uniqueRejectedFonemas(progress) {
+  const seen = new Set();
+  return (progress.rejectedFonemas || []).filter(r => {
+    if (seen.has(r.fonema)) return false;
+    seen.add(r.fonema);
+    return true;
+  });
+}
+
+function startRemedialPhase() {
+  const users = getUsers();
+  const user = users[sessionEmail];
+  if (!user) return;
+  const progress = getProgress(user);
+  const items = uniqueRejectedFonemas(progress);
+  if (!items.length) return; // nó apagado — nada pra revisar agora
+
+  savedGrupos = grupos; savedDesafios = desafios;
+  savedFonemaGrupo = fonemaGrupo.slice(); savedFonemaLocal = fonemaLocal.slice();
+
+  const remedialGroup = { id: "__remedial__", nome: "Revisão", short: "Rev", fonemas: items.map(i => i.fonema) };
+  grupos = [remedialGroup];
+  desafios = remedialGroup.fonemas.slice();
+  fonemaGrupo = desafios.map(() => 0);
+  fonemaLocal = desafios.map((_, i) => i);
+  isRemedialMode = true;
+
+  releasePendingPhaseAttempts();
+  phaseSkipsUsed = 0;
+  phaseAttemptCommitted = false;
+  phaseGroupIndex = 0;
+  phaseStartIndex = 0;
+  phaseEndIndex = desafios.length - 1;
+  currentIndex = 0;
+  phaseSegmentStatus = new Array(desafios.length).fill(null);
+  phaseAttemptMediaIds = new Array(desafios.length).fill(null);
+  phaseAttemptVerified = new Array(desafios.length).fill(null);
+  phaseTotal.textContent = desafios.length;
+  statTotal.textContent = desafios.length;
+  showOnlyScreen("app");
+  initApp();
+}
+
+// Desfaz a troca temporária de grupos/desafios — chamado sempre que se
+// sai da tela de treino (ver backToPath), pra trilha voltar a mostrar as
+// fases de verdade em vez do grupo sintético de revisão.
+function exitRemedialMode() {
+  if (!isRemedialMode) return;
+  grupos = savedGrupos; desafios = savedDesafios;
+  fonemaGrupo = savedFonemaGrupo; fonemaLocal = savedFonemaLocal;
+  savedGrupos = savedDesafios = savedFonemaGrupo = savedFonemaLocal = null;
+  isRemedialMode = false;
+}
+
+function finishRemedialAttempt(correctCount, incorrectCount, skippedCount, scorePct, phaseLen) {
+  const users = getUsers();
+  const user = users[sessionEmail];
+  if (user) {
+    const progress = getProgress(user);
+    // Fonema respondido CERTO agora sai da lista — o que ainda saiu
+    // errado ou foi pulado continua pendente pra próxima tentativa.
+    desafios.forEach((f, i) => {
+      if (phaseSegmentStatus[i] === "correct") {
+        progress.rejectedFonemas = progress.rejectedFonemas.filter(r => r.fonema !== f);
+      }
+    });
+    registerStreakForToday(progress); // pratica do dia conta streak também
+    saveUserRecords({ [sessionEmail]: user });
+  }
+  mainCard.classList.add("hidden");
+  finalScreen.classList.remove("hidden");
+  const allCleared = correctCount === phaseLen;
+  document.getElementById("final-group-name").textContent = "Revisão";
+  document.getElementById("final-title").textContent = allCleared ? "Revisão concluída!" : "Quase lá!";
+  document.getElementById("final-subtitle-lead").textContent = allCleared
+    ? "Você revisou todos os fonemas pendentes em"
+    : "Você revisou os fonemas pendentes em";
+  document.getElementById("final-message").textContent = allCleared
+    ? "Ótimo trabalho! Não há mais nada pendente de revisão."
+    : "Os fonemas que ainda não saíram certo continuam na Revisão.";
+  document.getElementById("final-next-label").textContent = "Voltar à trilha";
+  const medalEl = document.querySelector(".final-medal");
+  medalEl.classList.remove("tier-blue", "tier-gray");
+  if (!allCleared) medalEl.classList.add("tier-blue");
+  statTotal.textContent = phaseLen;
+  statCorrect.textContent = correctCount;
+  document.getElementById("stat-wrong").textContent = incorrectCount;
+  document.getElementById("stat-skipped").textContent = skippedCount;
+  document.getElementById("final-stats-summary").textContent =
+    `${phaseLen} ${phaseLen === 1 ? "fonema revisado" : "fonemas revisados"}, ${correctCount} ${correctCount === 1 ? "confirmado" : "confirmados"}.`;
+  if (allCleared && !reducedMotion) startFinalConfetti();
+  playBeep(880, 0.3, "triangle", 0.25);
 }
 
 // ── Fase concluída ────────────────────────────
@@ -3804,12 +4362,23 @@ function finishPhase() {
   const incorrectCount = phaseSegmentStatus.filter(s => s === "incorrect").length;
   const skippedCount   = phaseSegmentStatus.filter(s => s === "skipped" || s === null).length;
   const scorePct = phaseLen ? Math.floor((correctCount / phaseLen) * 100) : 100;
+
+  // Nível de Revisão (fonemas rejeitados pelo médico, ver G3 na
+  // auditoria) tem seu próprio fechamento — nunca entra em
+  // completedGroupIds/ranking/fila de aprovação, porque "__remedial__"
+  // não é uma fase real da trilha.
+  if (isRemedialMode) {
+    finishRemedialAttempt(correctCount, incorrectCount, skippedCount, scorePct, phaseLen);
+    return;
+  }
+
   // Só entra em completedGroupIds (o que desbloqueia a próxima fase e conta
   // para o ranking de amigos) quando o aproveitamento real atinge o limiar
   // — ver PHASE_COMPLETION_THRESHOLD. A streak é registrada de todo jeito,
   // pela prática do dia, dentro da própria função.
   registerPhaseAttempt(grupos[phaseGroupIndex].id, scorePct);
   registerPhaseReview(grupos[phaseGroupIndex], scorePct);
+  phaseAttemptCommitted = true;
   const completedForReal = scorePct >= PHASE_COMPLETION_THRESHOLD;
 
   document.getElementById("final-title").textContent = !completedForReal ? "Quase lá!" : (isLast ? "Parabéns!" : "Fase concluída!");
@@ -3830,28 +4399,42 @@ function finishPhase() {
   statCorrect.textContent = correctCount;
   document.getElementById("stat-wrong").textContent = incorrectCount;
   document.getElementById("stat-skipped").textContent = skippedCount;
+  // Deixa explícito que errar e pular pesam igual pra fins de conclusão
+  // — sem isso, nada no resumo dizia que as duas coisas eram
+  // equivalentes (ver G10 na auditoria).
   document.getElementById("final-stats-summary").textContent =
-    `${phaseLen} ${phaseLen === 1 ? "questão proposta" : "questões propostas"}, ${correctCount} ${correctCount === 1 ? "acertada" : "acertadas"}, ${incorrectCount} ${incorrectCount === 1 ? "errada" : "erradas"} e ${skippedCount} ${skippedCount === 1 ? "pulada" : "puladas"}.`;
+    `${phaseLen} ${phaseLen === 1 ? "questão proposta" : "questões propostas"}, ${correctCount} ${correctCount === 1 ? "acertada" : "acertadas"}, ${incorrectCount} ${incorrectCount === 1 ? "errada" : "erradas"} e ${skippedCount} ${skippedCount === 1 ? "pulada" : "puladas"}.` +
+    (incorrectCount || skippedCount ? " Erros e pulos não contam como fonema dominado — só o que sai certo conta pra concluir a fase." : "");
 
   if (completedForReal && !reducedMotion) startFinalConfetti();
   playBeep(880, 0.3, "triangle", 0.25);
 }
 
 function restartPhase() {
+  releasePendingPhaseAttempts();
+  phaseSkipsUsed = 0;
+  phaseAttemptCommitted = false;
   currentIndex = phaseStartIndex;
   phaseSegmentStatus = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
   phaseAttemptMediaIds = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
+  phaseAttemptVerified = new Array(phaseEndIndex - phaseStartIndex + 1).fill(null);
   stopFinalConfetti(); finalScreen.classList.add("hidden");
   mainCard.classList.remove("hidden"); buildProgressBar(); loadChallenge();
 }
 
 function backToPath() {
   if (isRecording) stopAudio();
+  // Só libera áudio se a fase foi abandonada ANTES de terminar — se já
+  // passou por finishPhase, releasePendingPhaseAttempts não mexe em nada
+  // (ver phaseAttemptCommitted).
+  releasePendingPhaseAttempts();
+  const wasRemedial = isRemedialMode;
+  exitRemedialMode(); // restaura grupos/desafios reais antes de renderizar a trilha
   stopFinalConfetti();
   finalScreen.classList.add("hidden");
   mainCard.classList.remove("hidden");
   showOnlyScreen("path");
-  renderPathTree(false, phaseGroupIndex + 1);
+  renderPathTree(false, wasRemedial ? undefined : phaseGroupIndex + 1);
 }
 
 // Ao sair de uma fase em andamento (via botão "Voltar"), avisa que o
@@ -3952,9 +4535,12 @@ function createCustomGroup() {
   const patient = users[adminEditorPatientEmail];
   if (!patient) return;
   ensureGroupOrder(patient);
+  // Não entra em groupOrder ainda — um grupo sem nenhum exercício não
+  // pode virar nó clicável na trilha do paciente (tela quebrava com
+  // "undefined", ver F1 na auditoria). Entra em groupOrder só quando o
+  // primeiro exercício for adicionado a ele (ver addCustomExercise).
   patient.customContent.groups.push({ id, nome: name, short: shortLabel });
-  patient.customContent.groupOrder.push(id);
-  saveUserRecords({ [adminEditorPatientEmail]: patient });
+  if (!saveUserRecords({ [adminEditorPatientEmail]: patient })) return;
 
   setActiveContent(patient);
   nameInput.value = "";
@@ -4080,20 +4666,18 @@ function cancelEditExercise() {
 }
 
 // ── Excluir exercício personalizado ──
-let exercisePendingDeletion = null;
 function requestDeleteExercise(index) {
   const users = getUsers();
   const patient = users[adminEditorPatientEmail];
   const ex = patient && patient.customContent.exercises[index];
   if (!ex) return;
-  exercisePendingDeletion = index;
   document.getElementById("delete-exercise-question").textContent = `Excluir o exercício "${ex.text}"?`;
-  openModal("delete-exercise-modal");
+  requestConfirmAction(index, "delete-exercise-modal");
 }
 function executeDeleteExercise() {
-  if (exercisePendingDeletion === null || !adminEditorPatientEmail) { closeModal("delete-exercise-modal"); return; }
-  const index = exercisePendingDeletion;
-  exercisePendingDeletion = null;
+  if (pendingConfirmTarget === null || !adminEditorPatientEmail) { closeModal("delete-exercise-modal"); return; }
+  const index = pendingConfirmTarget;
+  pendingConfirmTarget = null;
   closeModal("delete-exercise-modal");
 
   const users = getUsers();
@@ -4139,10 +4723,7 @@ async function addPhysicalExercise() {
   if (!file.type.startsWith("video/")) { errorEl.textContent = "O arquivo precisa ser um vídeo."; errorEl.classList.remove("hidden"); return; }
   if (file.size > PHYSICAL_VIDEO_MAX_BYTES) { errorEl.textContent = `Vídeo muito grande (máx. ${Math.round(PHYSICAL_VIDEO_MAX_BYTES / 1024 / 1024)}MB).`; errorEl.classList.remove("hidden"); return; }
 
-  const users = getUsers();
-  const patient = users[adminEditorPatientEmail];
-  if (!patient) return;
-  ensureGroupOrder(patient); // garante customContent inteiro, inclusive physicalExercises
+  if (!getUsers()[adminEditorPatientEmail]) return;
 
   const btn = document.getElementById("admin-phys-submit-btn");
   setBtnLoading(btn, true);
@@ -4155,10 +4736,17 @@ async function addPhysicalExercise() {
     errorEl.classList.remove("hidden");
     return;
   }
-  patient.customContent.physicalExercises.push({
+  // Relê o paciente só AGORA, depois do await — o upload pode levar
+  // segundos, e usar o snapshot de antes do await sobrescreveria
+  // qualquer progresso/revisão salvos por essa conta nesse intervalo
+  // (ver F3 na auditoria).
+  const freshPatient = getUsers()[adminEditorPatientEmail];
+  if (!freshPatient) { setBtnLoading(btn, false); deleteMediaBlob(blobId); return; }
+  ensureGroupOrder(freshPatient); // garante customContent inteiro, inclusive physicalExercises
+  freshPatient.customContent.physicalExercises.push({
     id: newMediaId(), title, description: desc, mediaId: blobId, mediaMime: file.type, addedAt: Date.now(),
   });
-  saveUserRecords({ [adminEditorPatientEmail]: patient });
+  saveUserRecords({ [adminEditorPatientEmail]: freshPatient });
   setBtnLoading(btn, false);
 
   document.getElementById("admin-phys-title").value = "";
@@ -4168,15 +4756,13 @@ async function addPhysicalExercise() {
   playBeep(660, 0.1);
 }
 
-let physicalExercisePendingDeletion = null;
 function requestDeletePhysicalExercise(id) {
-  physicalExercisePendingDeletion = id;
-  openModal("delete-physical-exercise-modal");
+  requestConfirmAction(id, "delete-physical-exercise-modal");
 }
 function executeDeletePhysicalExercise() {
-  if (!physicalExercisePendingDeletion || !adminEditorPatientEmail) { closeModal("delete-physical-exercise-modal"); return; }
-  const id = physicalExercisePendingDeletion;
-  physicalExercisePendingDeletion = null;
+  if (!pendingConfirmTarget || !adminEditorPatientEmail) { closeModal("delete-physical-exercise-modal"); return; }
+  const id = pendingConfirmTarget;
+  pendingConfirmTarget = null;
   closeModal("delete-physical-exercise-modal");
   const users = getUsers();
   const patient = users[adminEditorPatientEmail];
@@ -4251,7 +4837,7 @@ function renderPatientPhysicalExerciseList() {
       const videoWrap = card.querySelector(".physical-exercise-video-wrap");
       if (!videoWrap.classList.contains("hidden")) return;
       const url = await mediaBlobUrl(item.mediaId);
-      if (!url) { showToast("Não foi possível carregar este vídeo."); return; }
+      if (!url) { showToast("Não foi possível carregar este vídeo.", true); return; }
       videoWrap.innerHTML = `<video controls src="${url}"></video>`;
       videoWrap.classList.remove("hidden");
       btn.classList.add("hidden");
@@ -4319,6 +4905,7 @@ function renderGroupOrderList() {
       </span>
       <span class="group-order-index">${idx + 1}</span>
       <span class="group-order-name">${escapeHtml(g.nome)}</span>
+      ${isCustom && g.fonemas.length > 0 && g.fonemas.length < 5 ? `<span class="group-order-min-note" title="Com poucos exercícios, o limiar de ${PHASE_COMPLETION_THRESHOLD}% vira quase exigência de acerto total">precisa de ${Math.ceil(g.fonemas.length * PHASE_COMPLETION_THRESHOLD / 100)}/${g.fonemas.length} certos pra concluir</span>` : ""}
       <span class="group-order-actions">
         <button type="button" class="group-order-move-btn" data-move="up" title="Mover para cima" aria-label="Mover ${escapeHtml(g.nome)} para cima"${idx === 0 ? " disabled" : ""}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
@@ -4411,17 +4998,15 @@ function saveGroupRename(groupId, newName) {
 }
 
 // ── Excluir fase personalizada (e os exercícios dela) ──
-let groupPendingDeletion = null;
 function requestDeleteGroup(groupId, groupName) {
-  groupPendingDeletion = groupId;
   document.getElementById("delete-group-question").textContent =
     `Excluir a fase "${groupName}"? Os exercícios personalizados dela também serão removidos. Essa ação não pode ser desfeita.`;
-  openModal("delete-group-modal");
+  requestConfirmAction(groupId, "delete-group-modal");
 }
 function executeDeleteGroup() {
-  if (!groupPendingDeletion || !adminEditorPatientEmail) { closeModal("delete-group-modal"); return; }
-  const groupId = groupPendingDeletion;
-  groupPendingDeletion = null;
+  if (!pendingConfirmTarget || !adminEditorPatientEmail) { closeModal("delete-group-modal"); return; }
+  const groupId = pendingConfirmTarget;
+  pendingConfirmTarget = null;
   closeModal("delete-group-modal");
 
   const users = getUsers();
@@ -4535,7 +5120,11 @@ function addPatientByDoctor() {
 
   patient.pendingInvites.push({ doctorEmail: sessionEmail, doctorName: doctor.name, sentAt: Date.now() });
   if (!doctor.sentInvites.includes(patient.email)) doctor.sentInvites.push(patient.email);
-  saveUserRecords({ [patient.email]: patient, [sessionEmail]: doctor });
+  if (!saveUserRecords({ [patient.email]: patient, [sessionEmail]: doctor })) {
+    errorEl.textContent = "Não foi possível enviar o convite — tente novamente.";
+    errorEl.classList.remove("hidden");
+    return;
+  }
 
   document.getElementById("add-patient-id").value = "";
   successEl.textContent = `Convite enviado para ${patient.name}!`;
@@ -4570,16 +5159,21 @@ function renderPatientsList() {
   patients.forEach(p => {
     const stats = computePatientStats(p);
     const totalGroups = getUserGroups(p).length;
+    const pendingReviews = ((p.progress && p.progress.reviews) || []).filter(r => r.status === "pendente").length;
     const card = document.createElement("div");
     card.className = "patient-card";
     card.onclick = () => openPatientDetail(p.email);
-    card.setAttribute("aria-label", `Abrir perfil de ${p.name}`);
+    card.setAttribute("aria-label", `Abrir perfil de ${p.name}${pendingReviews ? ` — ${pendingReviews} aprovação(ões) pendente(s)` : ""}`);
     makeKeyboardClickable(card);
     card.innerHTML = `
-      <div class="patient-card-avatar">${p.avatar ? `<img src="${p.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG}</div>
+      <div class="patient-card-avatar">
+        ${p.avatar ? `<img src="${p.avatar}" alt=""/>` : DEFAULT_AVATAR_SVG}
+        ${pendingReviews ? `<span class="icon-badge-dot" title="${pendingReviews} aprovação(ões) pendente(s)"></span>` : ""}
+      </div>
       <div class="patient-card-info">
         <span class="patient-card-name">${escapeHtml(p.name)}</span>
         <span class="patient-card-meta">${levelLabel(computeLevel(p))} · ${stats.groupsDone}/${totalGroups} fases · ${stats.accuracyPct}% de acerto</span>
+        ${pendingReviews ? `<span class="patient-card-pending-tag">${pendingReviews} aprovação${pendingReviews > 1 ? "ões" : ""} pendente${pendingReviews > 1 ? "s" : ""}</span>` : ""}
       </div>
       <div class="patient-card-actions">
         <button type="button" class="patient-card-add-btn" title="Adicionar exercício para este paciente" aria-label="Adicionar exercício para ${escapeHtml(p.name)}">+</button>
@@ -4659,13 +5253,38 @@ function openPatientDetail(email) {
     errBars.innerHTML = `<div class="perf-empty">Nenhum erro recorrente registrado.</div>`;
   } else {
     const max = entries[0].incorrect;
+    const progress = getProgress(p);
     entries.forEach(e => {
+      const alreadyPending = progress.rejectedFonemas.some(r => r.fonema === e.f);
       const row = document.createElement("div");
       row.className = "error-bar-row";
-      row.innerHTML = `<span class="error-bar-label">${escapeHtml(e.f)}</span><div class="error-bar-track"><div class="error-bar-fill" style="width:${(e.incorrect / max) * 100}%"></div></div><span class="error-bar-count">${e.incorrect}</span>`;
+      row.innerHTML = `<span class="error-bar-label">${escapeHtml(e.f)}</span><div class="error-bar-track"><div class="error-bar-fill" style="width:${(e.incorrect / max) * 100}%"></div></div><span class="error-bar-count">${e.incorrect}</span>
+        <button type="button" class="error-bar-repeat-btn"${alreadyPending ? " disabled" : ""}>${alreadyPending ? "Já pedido" : "Pedir repetição"}</button>`;
+      if (!alreadyPending) {
+        row.querySelector(".error-bar-repeat-btn").onclick = () => requestFonemaRepeat(email, e.f);
+      }
       errBars.appendChild(row);
     });
   }
+  maybeStartDoctorDetailTour();
+}
+
+// Configurável pelo médico independente de uma revisão pendente existir:
+// julgando pelo padrão de erro recorrente do paciente (ver
+// detail-error-bars), ele pode mandar um fonema específico direto pro
+// nível de Revisão do paciente, sem precisar esperar uma fase inteira
+// ser reprovada. Mesmo destino de setReviewStatus("rejeitado") — um
+// único lugar onde "precisa repetir" realmente significa alguma coisa
+// pro paciente (ver G3 na auditoria).
+function requestFonemaRepeat(patientEmail, fonema) {
+  const users = getUsers();
+  const patient = users[patientEmail];
+  if (!patient) return;
+  const progress = getProgress(patient);
+  if (progress.rejectedFonemas.some(r => r.fonema === fonema)) return;
+  progress.rejectedFonemas.push({ fonema, groupId: null, addedAt: Date.now() });
+  if (!saveUserRecords({ [patientEmail]: patient })) return;
+  openPatientDetail(patientEmail);
 }
 
 const REVIEW_STATUS_LABEL = { correct: "Certo", incorrect: "Errado", skipped: "Pulado" };
@@ -4701,9 +5320,11 @@ function renderPatientReviews(patient) {
     r.attempts.forEach(a => {
       const row = document.createElement("div");
       row.className = "review-attempt-row";
+      const unverified = a.status !== "skipped" && !a.verified;
       row.innerHTML = `
         <span class="review-attempt-fonema">${escapeHtml(a.fonema)}</span>
         <span class="review-attempt-status status-${a.status}">${REVIEW_STATUS_LABEL[a.status] || a.status}</span>
+        ${unverified ? `<span class="review-attempt-unverified" title="O reconhecimento de fala não respondeu a tempo nesta tentativa — o resultado veio só de volume/duração, ouça com atenção.">não verificado por voz</span>` : ""}
         ${a.mediaId ? `<audio controls class="review-attempt-audio"></audio>` : `<span class="review-attempt-none">sem áudio</span>`}`;
       attemptsWrap.appendChild(row);
       if (a.mediaId) {
@@ -4724,10 +5345,32 @@ function setReviewStatus(patientEmail, reviewId, status) {
   const progress = getProgress(patient);
   const review = (progress.reviews || []).find(r => r.id === reviewId);
   if (!review) return;
+  const previousStatus = review.status;
+  const previousRejected = progress.rejectedFonemas.slice();
   review.status = status;
   review.reviewedAt = Date.now();
-  // Já foi revisado pelo médico — o áudio não tem mais nenhuma
-  // finalidade, libera o espaço em vez de acumular indefinidamente.
+  // Rejeitado vira retreino de verdade, não só um registro morto: os
+  // fonemas dessa revisão entram no nível "Revisão" (fora da trilha
+  // principal), fechando o ciclo que faltava (ver G3 na auditoria) —
+  // sem isso, "Rejeitar" não mudava nada no app pro paciente.
+  if (status === "rejeitado") {
+    review.attempts.forEach(a => {
+      if (a.status === "skipped") return;
+      if (!progress.rejectedFonemas.some(r => r.fonema === a.fonema && r.groupId === review.groupId)) {
+        progress.rejectedFonemas.push({ fonema: a.fonema, groupId: review.groupId, addedAt: Date.now() });
+      }
+    });
+  }
+  // Só libera o áudio DEPOIS de confirmar que a gravação foi salva —
+  // se falhar (armazenamento cheio), a revisão volta a "pendente" e o
+  // áudio continua intacto, em vez de virar uma referência quebrada
+  // (mediaId apontando pra um blob já apagado) — ver T3 na auditoria.
+  if (!saveUserRecords({ [patientEmail]: patient })) {
+    review.status = previousStatus;
+    review.reviewedAt = null;
+    progress.rejectedFonemas = previousRejected;
+    return;
+  }
   review.attempts.forEach(a => {
     if (a.mediaId) { releaseMediaBlob(a.mediaId); a.mediaId = null; }
   });

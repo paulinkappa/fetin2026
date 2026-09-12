@@ -1,6 +1,6 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-08-29 (Rodada 34)
+  Última atualização: 2026-08-30 (Rodada 39)
 =============================================
 
 ── SOBRE O PROJETO ──────────────────────────
@@ -1616,3 +1616,167 @@ Rodada 34 — 2026-08-29
     do médico (aprovar/rejeitar) — tudo funcionando, sem erro novo no
     console
   - Cache-busting atualizado para style.css v=48 e script.js v=42
+
+Rodada 35 — 2026-08-30
+  - Correção em massa de todos os achados possíveis da Auditoria Rodada
+    2 (45 achados), priorizando os críticos. Resumo dos principais
+    (detalhe completo dado ao usuário no chat, não repetido aqui):
+    · F1 (crítico) — fase customizada sem exercício não é mais
+      jogável nem trava fases seguintes (isPlayableGroup/
+      isGroupUnlocked); trilha mostra "(sem exercícios)" cinza
+    · G1 (crítico) — tentativas resolvidas pelo heurístico de volume
+      (não pelo reconhecimento real) ganham a tag "não verificado por
+      voz" na fila do médico (phaseAttemptVerified)
+    · T1 — remoção de conta agora apaga mídia própria (vídeos de
+      exercício, áudio de revisão) e toda conversa com ela
+      (purgeUserOwnedMedia/purgeChatsAndMediaFor)
+    · T2/F2 — releasePendingPhaseAttempts + phaseAttemptGeneration +
+      phaseAttemptCommitted eliminam o vazamento de áudio entre
+      tentativas/reinícios de fase
+    · F3 — addPhysicalExercise relê o paciente DEPOIS do upload, não
+      antes, eliminando a corrida que sobrescrevia progresso
+    · F6 — phaseSkipsUsed (contador monotônico) fecha a brecha de
+      pular 3x, voltar, responder, pular de novo
+    · G2/G7 — ranking agora usa groupBestScore (melhor nota por fase,
+      não soma de tentativas) e segmenta por nível antes de comparar
+    · G3 — nível "Revisão" novo (remedial-node), fora da árvore de
+      fases, populado por rejeição de revisão OU por
+      requestFonemaRepeat (pedido manual do médico direto dos erros
+      recorrentes) — isso resolve também o pedido de "repeat
+      configurável pelo médico"
+    · Tour guiado refeito com textos que dizem o que acontece ao
+      clicar, mais os tours doctorPanel/doctorDetail que não existiam
+    · Badge de aprovação pendente na lista de pacientes, ARIA
+      role=dialog automático em todo showOverlay, toasts de erro
+      passaram a exigir clique em "OK, entendi", resultado da
+      gravação anunciado via aria-live, botão "+" e busca de
+      amigos/pacientes corrigidos (44px e sem botão aninhado)
+  - Testado ao vivo, item por item, incluindo o ciclo completo do
+    nível de Revisão (rejeitar → nó ativa → treinar → nó desativa) e a
+    purga de mídia no T1 (blobs confirmados apagados do IndexedDB)
+  - Cache-busting atualizado para style.css v=49 e script.js v=43
+
+Rodada 36 — 2026-08-30
+  - Corrigido bug real: os 5 botões do cabeçalho (Perfil/Amigos/
+    Mensagens/Lembretes/Configurações), ao expandir o rótulo no hover/
+    foco, tinham a parte de cima cortada. Causa: .home-top tem
+    overflow-y:hidden (pra rolagem horizontal funcionar sem rolar
+    verticalmente também) e não tinha nenhum padding-top — o
+    .icon-btn:hover sobe 2px (translateY) e ganha uma sombra maior
+    (--sh-md), e sem folga acima isso ficava cortado bem na borda do
+    container, exatamente como o menu suspenso da Rodada 28 (mesma
+    causa raiz: overflow:hidden cortando um filho que "vaza" por
+    transform/sombra, não só por posição)
+  - Correção: padding-top:10px + margin-top:-10px em .home-top (mesma
+    técnica que já existia pro padding-bottom), dando folga suficiente
+    sem empurrar o resto da tela pra baixo. Confirmado por medição
+    direta (getBoundingClientRect): borda do botão em hover fica 8px
+    dentro do limite de corte do container, não mais em cima dele
+  - Não foi possível reproduzir visualmente o corte neste navegador
+    sandboxed (o hover simulado não mostrou o defeito em nenhuma
+    largura testada) — a correção foi validada matematicamente via
+    medição de coordenadas, não por captura de tela do bug antes/depois
+  - Cache-busting de style.css atualizado para v=50
+
+Rodada 37 — 2026-08-30
+  - Troca de tipografia: Baloo 2 (títulos) + Nunito (corpo/botões) →
+    Quicksand (títulos) + Karla (corpo/botões), a pedido do usuário
+    depois de eu propor as duas opções (a outra era Fredoka+Mulish)
+  - Import do Google Fonts trocado em index.html; todas as ~36
+    ocorrências de font-family em style.css substituídas (mais 1 em
+    script.js, na tela de "pode fechar esta aba")
+  - Quicksand não tem os pesos 800/900 que a Baloo 2 usava em ~19
+    regras (títulos grandes, medalha, stat-value, etc.) — todos
+    rebaixados pra 700 (o mais forte que a família tem de verdade),
+    pra evitar negrito sintético do navegador (que distorce o desenho
+    da letra em vez de usar um peso desenhado de propósito)
+  - .auth-title e .home-title tinham letter-spacing:-1px calibrado
+    pra Baloo 2 (mais larga/arredondada) — com Quicksand (mais estreita
+    por natureza) isso apertava demais as letras; suavizado para
+    -.01em nas duas, mantendo o visual compacto sem prejudicar a
+    leitura
+  - Testado ao vivo em várias telas (login, home, treino — fonema
+    grande com letter-spacing positivo intacto —, tela final com
+    título em gradiente, ranking): texto sempre nítido, sem
+    sobreposição de letras, acentuação em português (á, ã, ç) correta,
+    e confirmado via document.fonts que as duas famílias realmente
+    carregaram (não caiu num fallback silencioso)
+  - Cache-busting atualizado para style.css v=51 e script.js v=44
+
+Rodada 38 — 2026-08-30
+  - URGENTE (prioridade 1): causa real da permissão de microfone sendo
+    pedida a cada exercício encontrada — stopAudio() (chamado em TODA
+    troca de exercício, via loadChallenge) fechava o AudioContext e
+    startAudio() recriava um novo a cada tentativa, mesmo mantendo o
+    MediaStream vivo. Fechar/reabrir repetidamente um AudioContext
+    ligado à mesma faixa de microfone é gatilho conhecido pra o
+    navegador derrubar a sessão de captura por trás dos panos. Corrigido
+    reaproveitando o MESMO AudioContext/analyser entre exercícios
+    (audioGraphStream controla quando precisa recriar de verdade);
+    stopAudio() agora só suspende (audioCtx.suspend()) em vez de
+    fechar. Mensagem de erro também diferencia 1ª solicitação de
+    permissão revogada no meio do treino
+  - Perfil: edição deixou de salvar sozinha. Foto/ícone (que persistiam
+    na hora, ignorando o botão Salvar) agora só entram em
+    profileDraftAvatar até o Salvar de verdade; X/Esc com alteração
+    pendente abre modal "Sair sem salvar"/"Continuar editando"
+    (guard centralizado em hideOverlay, cobre os dois jeitos de fechar);
+    sem alteração, fecha direto
+  - Árvore de progresso: passou a rolar automaticamente até a fase
+    atual (primeira não concluída) ao entrar, não só ao voltar de uma
+    fase recém-concluída — computeCurrentPhaseIndex novo,
+    scroll-margin-top nos nós evita ficar atrás do cabeçalho
+  - Cabeçalho da árvore (Voltar/fase/tema/dica) passou a acompanhar a
+    rolagem. Nem position:sticky nem :fixed funcionavam nesta base
+    (body com overflow-y:auto mas quem rola é o html, e toda tela
+    carrega um transform residual da própria animação de entrada do
+    app — quebra o containing block dos dois); resolvido com
+    position:absolute + JS sincronizando o "top" a cada scroll
+    (syncPathHeaderPosition), mesma ideia já usada pro menu suspenso
+  - "Copiado!" apareceu como texto flutuante discreto ao copiar o ID
+    (antes só trocava o ícone), com proteção contra cliques repetidos
+    empilhando timers; bônus: o fallback de execCommand("copy") tinha
+    o retorno de sucesso ignorado, mostrando "copiado" mesmo quando a
+    cópia falhava — corrigido
+  - Verificação: várias partes só puderam ser confirmadas
+    matematicamente (medição direta de coordenadas/estado), não por
+    captura de tela mostrando o comportamento "ao vivo" — este
+    navegador de teste sempre reporta document.visibilityState=hidden/
+    hasFocus()=false (limitação conhecida, já documentada em rodadas
+    anteriores), o que suspende requestAnimationFrame e impede ver a
+    rolagem automática acontecer de fato aqui. Lógica confirmada correta
+    chamando os mesmos trechos fora do rAF
+  - Cache-busting atualizado para style.css v=54 e script.js v=46
+
+Rodada 39 — 2026-08-30
+  - Decisão do usuário registrada: prioridade do projeto passa a ser
+    funcionalidade/otimização, não segurança — app roda local, na
+    própria máquina, pra apresentação de projeto universitário, sem
+    lançamento público por enquanto. Itens de segurança da auditoria
+    (senha fraca, CSP, validação de e-mail) ficam deliberadamente em
+    espera até (e se) houver lançamento real — não tocados nesta rodada
+  - Corrigido o pedido de amizade fantasma: se A e B se adicionam quase
+    ao mesmo tempo (cada um manda convite pro outro antes de ver o do
+    outro), aceitar OU recusar agora limpa o pedido nos DOIS sentidos
+    (respondFriendRequest) — antes só limpava o sentido respondido,
+    deixando o outro "pendente" pra sempre mesmo já sendo amigos
+  - Limite de tamanho/duração de áudio de chat não será implementado —
+    decisão do usuário, demonstrações são curtas (menos de 1 minuto)
+  - Revisão de código pedida pelo usuário — duplicação real removida,
+    sem mudar comportamento nenhum (tudo testado ao vivo depois):
+    · 3 fluxos de login quase idênticos (handleLogin,
+      handleAccountPickerLogin, handleAccountsSwitchLogin) — extraído
+      authenticateUser (verifica e-mail/senha, mostra erro) e
+      enterSessionAsUser (entra na sessão, aplica UI, mostra home) —
+      cada função agora só declara o que é de fato diferente nela
+    · 5 pares "pedir confirmação → excluir" (remover conta, remover
+      amigo, excluir exercício, excluir vídeo de exercício físico,
+      excluir fase) tinham cada um sua própria variável global só pra
+      guardar o alvo pendente — consolidado num único
+      pendingConfirmTarget + requestConfirmAction, já que só um modal
+      de confirmação fica aberto por vez. As diferenças reais de cada
+      fluxo (texto de pergunta dinâmico, guardas extras como
+      adminEditorPatientEmail, o que acontece depois de excluir) foram
+      mantidas exatamente como estavam — só a variável/abertura de
+      modal repetida saiu
+  - Cache-busting atualizado para style.css v=54 e script.js v=47
