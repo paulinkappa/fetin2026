@@ -1,6 +1,6 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-08-30 (Rodada 39)
+  Última atualização: 2026-09-23 (Rodada 57)
 =============================================
 
 ── SOBRE O PROJETO ──────────────────────────
@@ -1780,3 +1780,663 @@ Rodada 39 — 2026-08-30
       mantidas exatamente como estavam — só a variável/abertura de
       modal repetida saiu
   - Cache-busting atualizado para style.css v=54 e script.js v=47
+
+Rodada 40 — 2026-09-17
+  - Nova conta fixa de administrador para demonstração:
+    admin@admin / 123456 (ensureAdminAccount, criada uma única vez no
+    boot do app, se ainda não existir no dispositivo). É uma conta do
+    tipo "paciente" comum, marcada com isAdmin:true
+  - Administrador tem acesso irrestrito à trilha (isCurrentUserAdmin):
+    · isGroupUnlocked() sempre retorna true pra essa conta — qualquer
+      fase aparece desbloqueada na árvore, independente de pré-requisito
+      ou progresso anterior (startPhase/renderPathTree não precisaram de
+      lógica própria, já herdam o bypass de isGroupUnlocked)
+    · skipChallenge()/updateSkipButtonState() ignoram o limite de 3
+      pulos por fase (SKIP_LIMIT_PER_PHASE) só para essa conta
+  - Nenhuma mudança de comportamento para contas comuns — todo bypass é
+    condicionado a isCurrentUserAdmin(), que só é true para admin@admin;
+    testado ao vivo com uma conta paciente normal lado a lado (continua
+    só com a 1ª fase liberada e limite de 3 pulos, como antes)
+  - Fases sem exercícios (isPlayableGroup) continuam bloqueadas mesmo
+    para o administrador — não há conteúdo pra abrir, então esse gate
+    não é um "pré-requisito", é ausência de dados
+  - Cache-busting atualizado para script.js v=48
+
+Rodada 41 — 2026-09-18
+  - Usuário relatou que a permissão de microfone continuava sendo pedida
+    a cada exercício mesmo depois da correção da Rodada 39 (reuso de
+    micStream/AudioContext) — pedido explícito de revisão profunda de
+    todo o fluxo, não só um remendo pontual
+  - Investigação: auditoria de código de toda a cadeia (startAudio,
+    loadChallenge, prevChallenge/skipChallenge/advance, finishPhase,
+    restartPhase, backToPath, confirmLogout, toggleChatAudioRecording)
+    + teste ao vivo com getUserMedia instrumentado (contador de chamadas
+    reais) simulando várias sessões, fases, pulos, replay e logout/login
+    — em todos os cenários, getUserMedia() só era chamado 1x por sessão,
+    como esperado. A correção da Rodada 39 estava, de fato, correta
+  - Causa raiz real, achada nessa auditoria mais profunda:
+    startSpeechRecognition() (reconhecimento de fala do navegador, usado
+    pra confirmar o fonema dito) criava uma instância NOVA de
+    SpeechRecognition a cada exercício — API do navegador separada do
+    getUserMedia, com sua própria captura de microfone por trás. Criar
+    essa instância de novo a cada tentativa reabria uma sessão de
+    captura própria do motor de reconhecimento, fora do controle do
+    reuso já corrigido do lado do áudio "principal"
+  - Corrigido: SpeechRecognition agora também é criado uma única vez por
+    sessão (ensureSpeechRecognitionInstance) e reaproveitado entre
+    tentativas — os handlers passaram a ler recognitionCurrentFonema
+    (atualizado a cada chamada) em vez de fechar sobre o parâmetro
+    fonema, já que o mesmo objeto agora atende várias tentativas.
+    stopSpeechRecognition() só aborta a escuta em andamento, sem mais
+    descartar o objeto
+  - Testado ao vivo: instrumentei a referência ao objeto `recognition`
+    e confirmei que ela permanece EXATAMENTE a mesma across 4 exercícios
+    seguidos, após replay de fase, após pular exercício e após
+    logout/login com outra sessão — nunca recriada
+  - Cache-busting atualizado para script.js v=49
+
+Rodada 42 — 2026-09-18
+  - Usuário reportou que o pedido de permissão repetido PERSISTE mesmo
+    depois da correção do SpeechRecognition (Rodada 41), em todas as
+    telas, e pediu revisão profunda considerando ciclo de vida completo
+    do MediaStream e diferenças entre navegadores (Chrome/Firefox/
+    Safari/Edge/mobile), Permissions API, iframes/Permissions-Policy etc.
+  - Auditoria de código (3ª passada): inventário completo de TODOS os
+    pontos que chamam getUserMedia() no projeto (bootstrapMicPermission,
+    requestMicPermission, retryMicPermission, startAudio,
+    toggleChatAudioRecording) — todos já reaproveitam micStream
+    corretamente; nenhum ponto novo de chamada redundante encontrado.
+    Também descartado: dupla chamada de bootstrapMicPermission (os dois
+    pontos que a chamam — applyUserToUI e closeWelcomeOverlay — são
+    mutuamente exclusivos por sessão); vídeo de exercício físico é
+    upload de arquivo pelo médico, não captura ao vivo do paciente
+  - Pesquisa externa sobre comportamento real de cada navegador:
+    · Chrome/Edge: permissão persistente por origem, não deveria pedir
+      de novo dentro da mesma sessão sem motivo real
+    · Firefox: recarregar a página tende a pedir de novo — não persiste
+      da mesma forma que o Chrome entre reloads
+    · Safari: comportamento documentado (inclusive como bug conhecido em
+      SPAs/PWAs) de pedir de novo por FAXA DE TEMPO/heurística interna
+      (demorar para responder, trocar de janela, notebook hibernar),
+      mesmo com a mesma origem e sem o app nunca soltar a faixa — isso
+      não é controlável só por JavaScript reaproveitando o stream
+    · iframes: getUserMedia é bloqueado/precisa de Permissions-Policy
+      explícita (`allow="microphone"`) se o app estiver rodando dentro
+      de um iframe de outra origem — relevante se o teste estiver sendo
+      feito por alguma ferramenta de preview que envolva o app num
+      iframe em vez de aba própria
+  - Como não é possível reproduzir o diálogo real de permissão do
+    navegador no ambiente de teste usado (sandbox bloqueia microfone de
+    verdade), foi adicionada instrumentação de diagnóstico (sem mudar
+    comportamento) pra próxima vez que o bug aparecer no navegador real
+    do usuário: log no console com prefixo "[mic]" toda vez que uma
+    faixa de áudio é obtida, toda vez que uma faixa termina sozinha
+    (evento "ended", com o motivo mais provável), o motivo exato de
+    qualquer novo getUserMedia() em startAudio(), e o estado da
+    Permissions API (navigator.permissions.query) ao longo da sessão
+  - CAUSA RAIZ REAL, confirmada com o usuário: ele abre o index.html
+    direto pelo Explorer do Windows ("botão direito → Abrir como →
+    Chrome/Edge"), ou seja, a página carrega como file:// — nunca passou
+    pelo servidor local (.claude/static-server.ps1, http://localhost:5500)
+    que este projeto já tem configurado. Chrome/Edge NÃO garantem a
+    mesma persistência de permissão por origem em páginas file:// que
+    garantem em http(s)/localhost — por isso nenhuma das duas correções
+    de código anteriores (Rodada 39 e 41), ambas tecnicamente corretas,
+    resolvia o sintoma: o problema nunca esteve na lógica de reuso do
+    stream/SpeechRecognition, e sim no protocolo usado pra abrir o app
+  - Nenhuma mudança de código foi necessária para a causa raiz em si —
+    a orientação passada ao usuário foi trocar de file:// para
+    http://localhost:5500 (rodando .claude/static-server.ps1). A
+    instrumentação de diagnóstico ([mic] no console) e as duas correções
+    de reuso anteriores continuam válidas e foram mantidas — são
+    melhorias reais, só não eram a causa deste sintoma específico
+  - Cache-busting atualizado para script.js v=50
+
+Rodada 44 — 2026-09-18
+  - Abertura pelo http://localhost:5500 confirmada como resolvida pelo
+    usuário — problema de permissão de microfone encerrado
+  - Tutorial guiado desativado para a conta Administrador: guarda
+    isCurrentUserAdmin() adicionada em maybeStartHomeTour,
+    maybeStartPathTour, maybeStartDoctorPanelTour,
+    maybeStartDoctorDetailTour e maybeStartAppTour (não em startTour em
+    si, pra não bloquear um replay manual do tour pelo painel de ajuda,
+    se o admin quiser ver). Testado ao vivo: login como admin@admin não
+    dispara tour nenhum na Home, na Trilha nem no exercício
+  - "Espectrograma" (forma de onda em tempo real durante a gravação)
+    reportado como parando de reagir à voz depois de poucas gravações
+    consecutivas, mesmo a gravação em si continuando a funcionar
+  - Investigação: não foi possível reproduzir sinal de áudio real no
+    ambiente de teste (mesma limitação já documentada — sandbox bloqueia
+    microfone de verdade e também limita síntese de áudio via política
+    de autoplay). Descartadas por teste: AudioContext ficar "preso"
+    suspenso entre gravações (confirmado que audioCtx.resume() funciona
+    normalmente em 6 ciclos seguidos) e o SpeechRecognition reaproveitado
+    (Rodada 41) "travar" silenciosamente depois de reutilizado várias
+    vezes (eventos onstart/onerror/onend dispararam normalmente em 6
+    ciclos seguidos)
+  - CAUSA PROVÁVEL encontrada via pesquisa externa: falha documentada do
+    WebAudio (relatada inclusive em bug tracker de terceiros) em que um
+    AnalyserNode conectado uma única vez a uma MediaStreamSource pode,
+    depois de um tempo ou de algumas gravações, parar de receber
+    amostras reais (fica "travado" entregando silêncio) mesmo com a
+    faixa de áudio continuando "live" — sem nenhuma reconexão automática
+    do navegador. É o preço colateral direto de manter o grafo de áudio
+    sempre vivo entre exercícios (a correção da permissão repetida,
+    Rodada 39) — a ligação fonte→ganho→analisador nunca era refeita
+  - Corrigido (startAudio): o AudioContext e a faixa de microfone
+    continuam sendo reaproveitados (preserva a correção da permissão),
+    mas a ligação createMediaStreamSource→ganho→AnalyserNode agora é
+    DESFEITA e REFEITA do zero a cada gravação — reconectar não pede
+    permissão de novo nem mexe no getUserMedia, só reanexa o analisador
+    a um nó de origem nunca. audioGraphSource (novo) guarda o nó atual
+    pra poder desconectá-lo antes de criar o próximo
+  - Testado ao vivo, 6 ciclos consecutivos de gravação: confirmado que
+    audioCtx e micStream permanecem exatamente os mesmos (nenhum novo
+    getUserMedia, permissão intacta) enquanto audioGraphSource e
+    analyser são recriados a cada ciclo, sem nenhum erro no console
+  - Cache-busting atualizado para script.js v=51
+
+Rodada 45 — 2026-09-22
+  - Apresentação marcada para quinta-feira (2026-09-24). Usuário pediu
+    para repetir, em TODOS os fluxos, o mesmo processo de revisão
+    profunda + teste ao vivo usado na correção da permissão/espectrograma
+  - QA completo ao vivo, via UI real (cliques de verdade, não só
+    JavaScript), cobrindo: cadastro de paciente, permissão de
+    microfone (tela própria do app), tour da Home, trilha, 5 gravações
+    reais seguidas de uma fase inteira (espectrograma reagindo em
+    todas, resultado salvo com áudio revisável), tela de resultado,
+    cadastro de médico, Painel do Médico, convite de paciente por ID
+    (fluxo de convite/aceite confirmado — só some da lista "sem
+    paciente vinculado" depois que o PACIENTE aceita), aprovar uma
+    revisão, rejeitar outra (confirma: rejeitar manda TODOS os fonemas
+    tentados daquela fase pra Revisão, não só os errados — comportamento
+    intencional do código, não bug), nível de Revisão abrindo
+    corretamente, edição de perfil com aviso de alterações não salvas,
+    "Copiado!" no ID da conta, alternância de tema claro/escuro,
+    logout e troca de conta. Zero erros no console durante todo o teste
+  - Achado real corrigido: campo "Telefone" no cadastro tinha atributo
+    HTML required sem nenhum aviso visual (sem asterisco/texto) — dava
+    "Preencha este campo" ao tentar cadastrar sem telefone. Removido
+    (mesmo campo já é opcional na edição de perfil, agora consistente)
+  - Achado registrado (não é bug, é comportamento a explicar na
+    apresentação): aprovar uma revisão NÃO desbloqueia a próxima fase
+    por si só — o desbloqueio depende do paciente ter atingido 65% de
+    acerto na tentativa local; aprovação só confirma/limpa da fila
+  - Achado registrado (relevante pro roteiro de demo): a conta
+    admin@admin aparece na lista "Escolher conta" de qualquer
+    dispositivo que já rodou o app, já que é semeada automaticamente
+  - Guia "VozAtiva — Abertura para Apresentação" expandido para virar o
+    documento mestre da apresentação: passo a passo completo do fluxo
+    de demonstração, checklist do que falta, informações essenciais
+    (funcionamento, tecnologias, público-alvo, modelo de negócio)
+
+Rodada 43 — 2026-09-18
+  - Usuário vai apresentar o projeto na semana seguinte e pediu um jeito
+    de abertura sem chance de erro, dado o bug da Rodada 42 (file:// vs
+    http://localhost:5500)
+  - Criado Iniciar VozAtiva.bat na raiz do projeto — duplo-clique abre o
+    servidor local (.claude/static-server.ps1) e o navegador já em
+    http://localhost:5500, na ordem certa, sem precisar digitar nada
+  - .claude/static-server.ps1: Start() agora tem tratamento de erro —
+    se a porta 5500 já estiver em uso (ex.: launcher rodado 2x), mostra
+    mensagem clara em vez de estourar uma exceção crua
+  - Testado manualmente (PowerShell): caminho de sucesso (serve
+    index.html corretamente, 200 OK) e caminho de erro (porta ocupada,
+    mensagem amigável) — os dois confirmados antes de escrever qualquer
+    instrução para o usuário
+  - Guia "VozAtiva — Abertura para Apresentação" publicado como doc:
+    passo a passo do dia, o que nunca fazer (e por quê), recomendação
+    de ensaio antes do dia D, tabela de solução de problemas comuns e
+    como encerrar depois
+
+Nota: as rodadas 44 e 45 abaixo foram registradas ANTES desta, por um
+anexo em ponto errado do arquivo — a ordem cronológica real é
+43 → 44 → 45 → 46 → 47. Conteúdo de cada uma continua correto.
+
+Rodada 46 — 2026-09-22
+  - Usuário (Paulo Ricardo Mendes Cândido, autor real do desenvolvimento)
+    pediu para atualizar título e créditos do projeto, e substituir a
+    seção de validação (antes "a definir") pelos avaliadores reais
+  - index.html — painel de Créditos reestruturado:
+    · Novo campo "Desenvolvedor e responsável pelo projeto": Paulo
+      Ricardo Mendes Cândido, colocado como primeiro/principal da lista
+    · "Médicos consultados" removido (rótulo não cabia mais — os
+      avaliadores reais não são todos médicos) e substituído por uma
+      nova seção "Especialistas que avaliaram o projeto", com card por
+      pessoa: Maria de Mello (Gerontecnologia), Liliane (fonoaudióloga)
+      e Bárbara Alves (fonoaudióloga, linguagem e surdez), cada um com
+      o retorno real que deu sobre a proposta
+    · Idealizador (Luan Campos) e Orientador (Renan Sthel) mantidos,
+      papéis explícitos
+    · Identidade visual continua "a definir" (não mencionado pelo
+      usuário desta vez, mantido honesto)
+  - style.css: novas classes .credits-subtitle/.credits-consultants/
+    .consultant-item/.consultant-name/.consultant-role/.consultant-note
+    — reaproveitam os tokens de cor já existentes (funciona em claro e
+    escuro sem necessidade de teste extra)
+  - Testado ao vivo: painel renderiza corretamente, todos os 3 cards de
+    especialista com quebra de texto correta
+  - Título do projeto atualizado em ambas as apresentações: "VozAtiva —
+    Plataforma de Reabilitação Auditiva Gamificada" (capa + subtítulo),
+    mantendo "VozAtiva" como nome de marca principal
+  - Apresentação de 24 seções ("Apresentação VozAtiva"): capa, slide de
+    contexto, slide de resultados (nova citação real dos especialistas),
+    slide de limitações (removida a pendência de validação, mantida só
+    identidade visual), e resposta do Q&A sobre validação — todos
+    atualizados para refletir os 3 avaliadores reais em vez de "a
+    definir". Créditos slide final também atualizado
+  - Apresentação condensada de 9 slides ("VozAtiva — Slides Curtos"):
+    capa com tagline+créditos, slide final de encerramento atualizados
+  - Doc "VozAtiva — Análise Estratégica": trecho da recomendação final
+    que citava "Médicos consultados: a definir" reescrito para refletir
+    a validação real já obtida
+  - Doc "VozAtiva — Abertura para Apresentação": checklist item sobre a
+    resposta pronta pra pergunta da banca e a seção de "limitações a
+    admitir" reescritos — só identidade visual profissional segue
+    pendente, validação por especialistas já é fato registrado
+  - Cache-busting atualizado para style.css v=55
+
+Rodada 47 — 2026-09-22
+  - Usuário pediu para remover completamente a linha "Identidade
+    visual: a definir" — o plano de consultar um amigo pra sugestões
+    de melhoria visual não aconteceu, então não deveria constar no
+    projeto de forma alguma (nem como pendência)
+  - index.html: linha removida do painel de Créditos (não substituída
+    por outro valor — simplesmente não existe mais)
+  - style.css: .credits-value.pending removida (ficou sem nenhum uso
+    depois da remoção da linha)
+  - Testado ao vivo (claro): painel mostra Idealizador → Orientador →
+    Desenvolvimento auxiliado por, sem nenhuma lacuna visual
+  - Apresentação de 24 seções: bullet "Identidade visual profissional:
+    a definir" (slide de Limitações) substituído por uma limitação real
+    já registrada em outro lugar do deck (falta teste clínico formal,
+    só avaliação de especialistas até agora); mini-tabela "Créditos —
+    status real" também perdeu a linha
+  - Doc "VozAtiva — Abertura para Apresentação": item inteiro do
+    checklist que só existia por causa da pergunta sobre identidade
+    visual foi apagado (não fazia mais sentido manter); trecho de
+    "limitações a admitir" também perdeu essa cláusula
+  - Deck condensado de 9 slides e doc "Análise Estratégica" nunca
+    mencionavam identidade visual — conferido, nada a mudar
+  - Cache-busting atualizado para style.css v=56
+
+Rodada 48 — 2026-09-22
+  - Usuário pediu uma revisão completa de todos os parâmetros e
+    informações do projeto (app, as duas apresentações, os dois docs),
+    considerando todas as mudanças de rodadas anteriores, antes da
+    apresentação de quinta-feira
+  - Conferido e CONFIRMADO consistente (sem mudança necessária):
+    · index.html/style.css — painel de Créditos, cache-busting
+      (style.css v=56, script.js v=51) batendo com o conteúdo real
+    · script.js — nenhuma referência hardcoded a nomes/créditos fora
+      do painel; ensureAdminAccount() e isCurrentUserAdmin() intactos
+    · Doc "Análise Estratégica" — já estava consistente desde a
+      Rodada 47
+    · Deck de 24 seções — contagem de 24 seções intacta; texto
+      completo relido de ponta a ponta via extração de texto da página
+    · Launcher (Iniciar VozAtiva.bat) e static-server.ps1 — arquivos
+      intactos desde a criação
+  - INCONSISTÊNCIAS REAIS encontradas e corrigidas:
+    · Deck condensado de 9 slides: slide de Limitações ainda dizia
+      "validação clínica formal com fonoaudiólogos ainda está
+      pendente" — desatualizado desde a Rodada 46 (a validação já
+      aconteceu). Corrigido pra mesma redação usada nos outros
+      materiais (avaliação de especialistas feita; falta é teste
+      clínico formal com pacientes)
+    · Deck de 24 seções: "ponto principal" do slide de Limitações
+      ainda comparava com uma pendência "no painel de Créditos" que
+      não existe mais ali (a Rodada 47 removeu a única pendência,
+      Identidade visual) — reescrito pra não depender de um exemplo
+      que não existe mais
+    · Doc "Abertura para Apresentação": item do checklist "Preparar os
+      slides — falta condensar" estava desatualizado (a versão
+      condensada já foi publicada há 2 rodadas) — reescrito e marcado
+      como concluído
+    · Doc "Abertura para Apresentação": seção "Informações essenciais"
+      nunca tinha sido atualizada com o título novo, os créditos
+      (Paulo/Luan/Renan) nem a validação dos 3 especialistas — lacuna
+      real já que essa seção é justamente "o que preciso dominar".
+      Novo parágrafo "Nome oficial e quem é quem" + "Validação já
+      feita" inserido logo após "O que é"
+    · Doc "Abertura para Apresentação": item do checklist sobre conta
+      personalizada recebeu a recomendação já dada na conversa (não
+      fazer ao vivo), sem forçar a decisão final que continua sendo do
+      usuário
+  - Testado ao vivo (script de teste corrigido no meio do caminho —
+    limpar localStorage sem recarregar a página derruba o
+    ensureAdminAccount, não é bug do app): login admin@admin, todas as
+    7 fases desbloqueadas, nenhum tour, painel de Créditos completo e
+    sem "Identidade visual" — tudo confirmado, zero erros no console
+  - Os dois decks (24 seções e condensado) republicados nos mesmos
+    links com as correções
+  - git status conferido (informativo, nada commitado): mudanças
+    acumuladas em .claude/static-server.ps1, index.html, script.js,
+    style.css, CONTEXTO_PROJETO_v5.txt, mais Iniciar VozAtiva.bat como
+    arquivo novo — nada commitado ainda nesta sessão
+
+Rodada 49 — 2026-09-22
+  - Usuário pediu uma terceira apresentação, focada especificamente em
+    explicar/defender o CÓDIGO (não o produto) — do conceito simples
+    (3 arquivos) até a implementação técnica, com trechos reais de
+    script.js, pra responder tanto leigos quanto especialistas sem
+    precisar decorar o código inteiro
+  - Publicada "VozAtiva — Por Dentro do Código" (19 seções + capa +
+    encerramento), mesma linguagem visual das outras apresentações,
+    com um componente novo de bloco de código (estilo editor, sempre
+    escuro, com destaque de sintaxe simples) e um componente de
+    antes/depois pros dois bugs reais corrigidos nesta sessão
+  - Trechos de código são cópias literais de funções reais do projeto
+    (generateSalt, hashPassword, showOnlyScreen, registerPhaseReview,
+    a rejeição que popula rejectedFonemas, o antes/depois do bug de
+    microfone e do bug da barra de áudio) — nada foi parafraseado como
+    se fosse código, o que aparece na tela é o código de verdade
+  - Estrutura: visão geral (3 arquivos, sem build) → tecnologias (por
+    que JS puro, as 4 Web APIs) → arquitetura (telas, localStorage vs
+    IndexedDB, o "molde" de usuário/progresso, mapa geral de fluxo) →
+    implementação de 6 funcionalidades principais → bastidores (os 2
+    bugs reais + por que não um banco de dados de verdade) →
+    preparação (tabela "o que precisa saber de cor" vs "só precisa
+    apontar" + 6 perguntas técnicas prováveis com resposta pronta)
+  - Testado ao vivo em claro/escuro e em viewport largo (1440px) —
+    blocos de código cabem sem corte; zero erros no console
+  - Novo item de pendência registrado no doc "Abertura para
+    Apresentação" (checklist "O que ainda falta fazer"): substituir as
+    vozes placeholder (síntese de voz do navegador, gênero
+    masculino/feminino) pelas vozes definitivas do projeto — hoje o app
+    cai pra speechSynthesis quando não há um .mp3 real em
+    fonemas-audio/ (a pasta só tem o LEIA-ME.txt, nenhum áudio real
+    ainda, conforme já documentado desde antes desta sessão)
+
+Rodada 50 — 2026-09-22
+  - Usuário pediu pra retomar a gravação das vozes definitivas: (1)
+    lista real dos fonemas a gravar, (2) mensagem pronta pra locutores,
+    (3) um prompt separado pra revisar as instruções de pronúncia com
+    embasamento fonético real — tudo baseado no código, sem inventar
+    fonema nem descrição
+  - Confirmado direto em BASE_GRUPOS (script.js): 65 fonemas reais, 7
+    grupos (Vogais=5, M e P/T e L/F e V/N e D/B e C/G e J=10 cada) —
+    bate exatamente com fonemas-audio/LEIA-ME.txt, nada foi inventado
+  - Achado técnico importante, registrado no doc: o código hoje carrega
+    UM arquivo por fonema (`${DEFAULT_PHONEME_AUDIO_DIR}${fonema}.mp3`)
+    sem distinguir voz masculina/feminina — o botão ♀/♂ só afeta a
+    síntese de voz do navegador (fallback), não escolhe entre dois
+    arquivos gravados. Gravar as duas vozes é o certo a fazer, mas vai
+    precisar de um pequeno ajuste de código pra realmente usá-las
+    (pendente, não feito agora — usuário avisará quando as gravações
+    estiverem prontas)
+  - Publicado doc "VozAtiva — Gravação das Vozes", 3 abas:
+    · Visão geral e fonemas — lista completa (tabela por grupo),
+      a nota técnica acima, convenção de pastas sugerida
+      (fonemas-audio/feminina/ e /masculina/, mesmo nome de arquivo
+      atual) e as recomendações de gravação já existentes no LEIA-ME
+    · Mensagem para locutores — texto pronto pra copiar/enviar,
+      explicando o app, o objetivo das gravações, como o áudio é usado
+      e orientações básicas de gravação, com a lista dos 65 sons anexa
+    · Prompt: revisão fonética — inclui o texto atual completo das 65
+      dicas (BASE_DICAS) como baseline, uma tabela de referência real
+      de fonética do PT-BR (ponto/modo de articulação, sonoridade),
+      5 problemas concretos já identificados no texto atual (uso
+      inconsistente de "vibre" pra 3 sons fisicamente diferentes,
+      "sussurre" não é termo fonético real, etc.) e os requisitos de
+      entrega (mesmas 65 chaves, linguagem simples pro paciente por
+      cima, fundamentação técnica por baixo)
+  - Novo item de pendência (implícito, não adicionado ao checklist
+    ainda): pequeno ajuste de código pra carregar arquivo de voz
+    conforme gênero selecionado, quando as gravações estiverem prontas
+
+Rodada 51 — 2026-09-23
+  - Usuário rodou o prompt de revisão fonética (Rodada 50) em outra
+    conversa e colou aqui o resultado — 65 frases revisadas, pedindo
+    avaliação antes de usar
+  - Revisão avaliada com rigor: contagem confirmou as 65 chaves batendo
+    exatamente com BASE_GRUPOS, sem fonema inventado/faltando, sem
+    jargão técnico vazando pro texto do paciente. Pontos fortes reais:
+    marcador de sonoridade consistente em toda a família surda/sonora
+    (P/B, T/D, F/V, C/G antes de A-O-U — "solte o ar de repente" vs.
+    "...com a voz"), L agora descreve corretamente a lateralidade,
+    CE/CI perdeu o "sussurre" (não é termo fonético real)
+  - Um problema técnico real identificado antes de aceitar: GE/GI e J
+    (mesmo som, pós-alveolar) ficaram com frase quase idêntica à de
+    CE/CI (alveolar), diferindo só por "com a voz" — sugeria que o par
+    vozeado de S seria J, quando na verdade é Z. Um ponto menor também
+    identificado: O descrito com "língua bem alta", igual U, quando é
+    vogal média
+  - Usuário pediu pra implementar com essas duas correções — aplicado
+    diretamente em BASE_DICAS (script.js): GE/GI/JA-JU reescritos pra
+    marcar "um pouco mais atrás do que no som de S" (lugar, não só
+    voz); O reescrito pra "altura média — nem baixa, nem tão alta
+    quanto no U"; todo o restante das 65 frases usa o texto revisado
+    tal como validado
+  - TI/DI mantidos com a pronúncia palatalizada (decisão já assumida
+    na Rodada 50) — comentário no código deixa isso explícito e como
+    reverter se as gravações definitivas saírem diferentes
+  - Testado ao vivo: as 65 chaves de BASE_DICAS conferidas em runtime
+    contra as de BASE_GRUPOS (idênticas), tela de exercício testada com
+    GE (a frase mais longa da correção) e O (a frase mais longa do
+    conjunto) — texto cabe sem corte, zero erro no console
+  - Doc "VozAtiva — Gravação das Vozes" (aba "Prompt: revisão
+    fonética") atualizado com um aviso de que a revisão já foi
+    aplicada, resumindo as correções feitas antes de entrar no código
+
+Rodada 52 — 2026-09-23
+  - Usuário perguntou (sem pedir execução) se era possível segmentar
+    automaticamente os áudios crus de fonemas de uma pasta fora do
+    projeto (D:\FETIN 2026\Paulo\audios\) em arquivos individuais por
+    fonema/sílaba, usando o conteúdo real do áudio (não nome/duração)
+    pra achar os cortes. Resposta: sim pra achar os limites do som
+    (energia/RMS com limiar adaptativo ao próprio pico do arquivo),
+    mas não pra identificar QUAL fonema é cada trecho — sem ferramenta
+    de reconhecimento de fala neste ambiente, isso depende de o
+    usuário confirmar ouvindo, ou assumir a ordem alfabética esperada
+    de gravação
+  - Primeira tentativa: instalado ffmpeg e Python (via winget) pra
+    montar o pipeline, gerados gráficos de análise pros 9 áudios da
+    pasta. Usuário interrompeu pedindo pra desfazer tudo (só tinha
+    perguntado se era possível, não mandado executar) — ffmpeg e
+    Python desinstalados, arquivos temporários apagados, nada tocado
+    no projeto nem nos áudios originais
+  - Usuário pediu de novo, agora explicitamente, pra montar o pipeline
+    nos grupos M-P, N-D e G-J primeiro. Ferramentas reinstaladas.
+    Pipeline: limpeza leve (redução de ruído + normalização) → detecção
+    de segmentos por energia com limiar adaptativo e fusão de
+    intervalos curtos demais pra ser pausa real (evita que um mergulho
+    de energia dentro da mesma produção vire dois cortes) → corte com
+    margem de segurança → nomeação assumindo a ordem alfabética do
+    grupo. M-P e N-D bateram 10/10 de primeira; G-J só bateu depois da
+    fusão de intervalos curtos
+  - Usuário reportou que o corte do PA saiu ruim (som cortado no início,
+    voz abafada/fraca). Causa identificada: P é oclusiva — tem uma fase
+    de fechamento silenciosa antes da explosão do som que a detecção
+    por energia não enxerga, então a margem padrão não bastava; e a
+    limpeza de ruído estava agressiva demais. PA recortado de novo com
+    mais margem no início e limpeza mais leve; família G (GA-GU)
+    removida do resultado a pedido do usuário
+  - Usuário pediu pra remover TODO o processamento (denoise,
+    normalização, fade) e manter só o áudio original com os cortes já
+    definidos. Todos os grupos daí em diante (T-L, F-V, Vogais, B-C)
+    foram cortados direto do .ogg original, sem nenhum filtro — a
+    única transformação é a conversão de contêiner pra .mp3
+  - T-L e F-V bateram 10/10 de primeira com a lógica de fusão de
+    intervalos. Vogais não convergiu sozinho mesmo com a fusão (6
+    segmentos contra 5 vogais esperadas — um deles bem mais longo que
+    os outros, sinal de duas produções coladas); os 6 trechos foram
+    cortados sem rótulo e enviados pro usuário ouvir. Usuário
+    identificou seg2=A, seg3=E, seg4=I, seg5=O, seg6=U — seg1 (o mais
+    longo, no início) não era nenhuma vogal e foi descartado
+  - B - C (K).ogg e B - C (S).ogg esclarecidos pelo usuário: (K) é B +
+    C sempre com som duro/velar (CA, "QUE"→/ke/, "QUI"→/ki/, CO, CU);
+    (S) é B + C sempre com som de /s/ (ÇA, CE, CI, ÇO, ÇU) — por isso
+    nenhuma hipótese anterior batia (cada arquivo tem 10 sons, não 8+2).
+    Os 20 cortes (10 de cada arquivo) foram gerados com rótulos que
+    indicam a origem e enviados pro usuário escolher. Conjunto final
+    escolhido: BA/BO/BU do arquivo (S), BE/BI/CA/CO/CU do arquivo (K),
+    CE/CI do arquivo (S) — combinação que dá o som "natural" de C em
+    português (duro antes de A/O/U, suave antes de E/I)
+  - Resultado final: 60 arquivos (faltam os 5 da família G, removidos
+    a pedido) copiados pra fonemas-audio/ no projeto, com os nomes
+    exatos que BASE_GRUPOS espera (A.mp3, MA.mp3, etc.). Ferramentas
+    de análise (ffmpeg, Python, numpy) e todos os arquivos de trabalho
+    temporários ficaram fora do projeto (scratchpad), nada delas foi
+    commitado
+  - Pendências (na época): gravar/segmentar a família G, o ajuste de
+    código pra voz por gênero, e testar os 60 arquivos ao vivo no app
+    — todas resolvidas na Rodada 53 abaixo, exceto a família G
+
+Rodada 53 — 2026-09-23
+  - Testado ao vivo no app (pendência da Rodada 52): os 65 fonemas
+    carregados via `new Audio()` no mesmo caminho que o app usa — 60
+    com duração válida, 5 falhando (família G, como esperado). Testado
+    também pela interface real (clique de verdade no botão de tocar
+    áudio, login como paciente de teste): A, MA, CE, TI, NA, BA
+    tocaram com sucesso (200 OK, sem erro), e GA (sem gravação) caiu
+    graciosamente no fallback de voz sintética sem travar o botão nem
+    gerar erro não tratado
+  - Usuário pediu duas coisas: (1) garantir que as 60 gravações só
+    tocam no modo de voz feminina — até então playPhonemeAudio()
+    carregava um único arquivo por fonema independente do ♀/♂
+    selecionado (gap já documentado desde a Rodada 49/50); (2) intenção
+    de gravar ele mesmo a versão masculina de cada fonema agora
+  - Implementado: os 60 arquivos movidos de fonemas-audio/ pra
+    fonemas-audio/feminina/; criada fonemas-audio/masculina/ (vazia,
+    pronta pra receber as gravações do usuário). script.js:
+    DEFAULT_PHONEME_AUDIO_DIR virou PHONEME_AUDIO_DIR_BY_GENDER (um
+    caminho por voiceGender); playPhonemeAudio() agora monta o source
+    com `PHONEME_AUDIO_DIR_BY_GENDER[voiceGender]` — uma gravação de
+    um gênero nunca é tentada no outro. index.html cache-busting do
+    script.js: v=52 → v=53
+  - Testado ao vivo de novo: voiceGender="female" → carrega
+    fonemas-audio/feminina/MA.mp3 (200 OK); voiceGender="male" →
+    tenta fonemas-audio/masculina/MA.mp3 (404, cai no fallback) —
+    isolamento por gênero confirmado funcionando
+  - Pendência: usuário vai gravar a versão masculina dos 65 fonemas;
+    quando enviar os áudios crus, repetir o mesmo processo de
+    segmentação por conteúdo real (energia/RMS, sem filtro no
+    resultado final, confirmação por escuta nos casos ambíguos) usado
+    nas Rodadas 51-52, salvando o resultado em fonemas-audio/masculina/
+
+Rodada 54 — 2026-09-23
+  - Usuário pediu créditos explícitos pras vozes (Anna Clara — voz
+    feminina, Paulo Ricardo — voz masculina) e reforçou o requisito de
+    separação estrita entre as duas (já implementado na Rodada 53):
+    cada ícone ♀/♂ só pode tocar o áudio da pessoa correspondente, sem
+    mistura nem substituição automática
+  - Adicionadas duas linhas no painel de créditos (index.html), mesmo
+    padrão visual das demais: "Voz feminina — Anna Clara" e "Voz
+    masculina — Paulo Ricardo", entre "Desenvolvimento auxiliado por"
+    e "Número do projeto". Testado ao vivo abrindo o painel — renderiza
+    corretamente
+  - Separação de vozes reconfirmada como já garantida pelo código da
+    Rodada 53 (PHONEME_AUDIO_DIR_BY_GENDER): não houve necessidade de
+    mudança adicional de lógica, só a identificação nos créditos
+  - Cache-busting atualizado para script.js v=52
+
+Rodada 55 — 2026-09-23
+  - Usuário gravou a voz masculina (Paulo Ricardo) — um único arquivo
+    (fonemas-audio/masculina/audio masculino.wav, ~97s, os 65 fonemas
+    em sequência na ordem de BASE_GRUPOS) e pediu pra começar a
+    segmentação
+  - Detecção automática (mesmo método das Rodadas 51-52: energia/RMS,
+    limiar adaptativo, fusão de intervalos curtos) achou 67 segmentos
+    contra 65 esperados. Processo de identificação dos 2 extras foi bem
+    mais difícil que nas rodadas anteriores — várias rodadas de
+    confirmação por áudio geraram respostas contraditórias entre si
+    (esperado, dado quão parecidas são sílabas tipo DA/DE/DI/DO/DU e
+    BA/BE/BI/BO/BU pra quem tá ouvindo cortes isolados rapidamente);
+    resolvido só depois de reancorar a contagem em pontos conhecidos
+    (DU confirmado no início, JO/JU confirmados no fim) e cortar cada
+    som individualmente numerado nesse intervalo
+  - 2 extras identificados e descartados: um logo após o TA (antes do
+    TE, mesmo padrão de "mergulho/blip" já visto antes) e um pedaço de
+    ruído puro (não um fonema, confirmado pelo usuário como "lixo")
+    logo depois do NI, antes do NO — esse é diferente dos extras
+    anteriores, que eram cliques/blips de duração muito curta; este
+    tinha duração normal mas era ruído sem conteúdo de fala
+  - Os 65 cortes finais gerados direto do .wav original, sem nenhum
+    filtro (mesmo padrão "sem processamento" definido pelo usuário nas
+    Rodadas 51-52 pra voz feminina), com margem de segurança no início
+    de cada corte. Conferidos pelo usuário em lotes por grupo — todos
+    aprovados, incluindo a família G (GA-GU), que a voz feminina ainda
+    não tem
+  - Copiados para fonemas-audio/masculina/ (65 arquivos). O .wav bruto
+    original (17MB) foi movido pra fora do projeto (não faz sentido
+    versionar no Git)
+  - Testado ao vivo: os 65 arquivos carregam via `new Audio()` no
+    caminho fonemas-audio/masculina/; testado também na interface real
+    — voiceGender="male" toca masculina/GA.mp3 (200 OK, novo — a
+    família G agora tem áudio de verdade num dos dois gêneros) e
+    feminina/GA.mp3 continua 404 nesse teste, confirmando que não há
+    mistura entre as vozes
+  - Estado atual: voz feminina (Anna Clara) 60/65 fonemas (falta a
+    família G); voz masculina (Paulo Ricardo) 65/65 completa
+  - Observação de processo pra rodadas futuras: quando a contagem de
+    segmentos não bate e o discurso tem sílabas foneticamente
+    parecidas em sequência (como as famílias N/D, B/C, G/J), ancorar a
+    verificação em pontos já confirmados nas duas pontas do trecho
+    ambíguo (não só numa ponta) antes de pedir pro usuário ouvir e
+    contar, evita repetir rodadas de confirmação contraditórias
+
+Rodada 56 — 2026-09-23
+  - Usuário pediu auditoria completa do projeto (concluído/parcial/
+    pendente/erros/requisitos esquecidos/pontos de validação). Feita
+    via 2 levantamentos em paralelo: leitura integral do changelog (55
+    rodadas) e verificação direta no código-fonte de cada achado
+    suspeito. Nenhum problema crítico encontrado; achado real mais
+    relevante: telefone é obrigatório de fato no cadastro
+    (handleSignup, falta o guard "phone &&") mas opcional na edição de
+    perfil (saveProfile) — inconsistência real entre as duas telas,
+    ainda não corrigida. Resto dos achados suspeitos (duplicidade do
+    bug .wrong/.error, fragilidade do bypass admin) se confirmaram como
+    falsos alarmes — código está consistente nesses pontos
+  - Usuário gravou o áudio que faltava: GA/GE/GI/GO/GU da voz feminina
+    (Anna Clara), pasta D:\FETIN 2026\Paulo\audios\WhatsApp Ptt
+    2026-09-23 at 18.19.04.ogg (5.55s). Detecção automática bateu 5/5
+    de primeira, sem ambiguidade (diferente da saga da voz masculina) —
+    provavelmente por serem só 5 sons com pausas bem marcadas
+  - Cortado direto do original sem nenhum filtro (mesmo padrão das
+    Rodadas 51-52/55), conferido pelo usuário, copiado pra
+    fonemas-audio/feminina/. Testado ao vivo via `new Audio()` no
+    caminho real do app: 65/65 fonemas carregam sem erro
+  - **Marco**: as duas vozes (Anna Clara/feminina e Paulo Ricardo/
+    masculina) estão agora 65/65 completas. Não há mais nenhum fonema
+    caindo no fallback de síntese de voz por falta de gravação
+  - Pendências que continuam de pé (da Rodada 55/auditoria): corrigir a
+    divergência do campo telefone (cadastro vs. perfil); reconfirmar
+    TI/DI contra as gravações reais agora que ambas existem; nada do
+    trabalho de áudio foi commitado no Git ainda
+
+Rodada 57 — 2026-09-23
+  - Usuário pediu pra resolver os pontos deixados em aberto pela
+    auditoria da Rodada 56, de uma vez: telefone, identidade visual,
+    reconferir o "falso alarme", testar os fixes visuais ao vivo,
+    conferir TI/DI, e commitar
+  - Telefone corrigido: handleSignup (script.js:1837) não tinha o guard
+    "phone &&" que saveProfile já tinha, então o cadastro tratava
+    telefone vazio como erro enquanto a edição de perfil aceitava.
+    Adicionado o guard — telefone agora é opcional nos dois lugares,
+    consistente. Testado ao vivo: cadastro com telefone vazio conclui
+    sem erro
+  - Identidade visual: conferido que não existe nenhuma referência a
+    "identidade visual" em script.js/index.html/style.css — já tinha
+    sido removida da aplicação na Rodada 47, só sobra registro
+    histórico no changelog (que não é código, não mexido)
+  - Falso alarme do bug .wrong/.error reconferido pessoalmente (não só
+    pelo relatório da auditoria anterior): script.js:3877/3884 e
+    style.css:1159-1160 usam ".wrong" de forma consistente; mesma
+    checagem pra ".status-incorrect" (barra de progresso). Confirmado:
+    não é bug real, só duplicata de registro no changelog antigo
+  - Fixes visuais testados ao vivo pela primeira vez (antes só
+    validados por leitura de código): hover dos botões do cabeçalho
+    sem corte nas duas pontas (ícone de Perfil à esquerda, ícone de
+    Configurações à direita — ambos expandem o rótulo de texto sem
+    cortar); rolagem automática até a fase atual confirmada com um
+    usuário simulado com progresso até F-V — a trilha abriu já
+    centralizada em "N e D" (próxima fase), sem precisar rolar
+  - TI/DI: como não tenho como ouvir o conteúdo do áudio, separei os 4
+    arquivos (TI e DI, feminina e masculina) e mandei pro usuário
+    confirmar se saíram palatalizados como a instrução de BASE_DICAS
+    assume — resposta ainda pendente no momento deste registro
+  - Cache-busting: script.js v=53 → v=54 (por causa do fix do telefone)
+  - Commit preparado com: fix do telefone (script.js), cache-busting
+    (index.html), e os 65 arquivos de áudio das Rodadas 51-56
+    (fonemas-audio/feminina/ e masculina/, ainda não commitados até
+    aqui apesar de já estarem no projeto há várias rodadas)

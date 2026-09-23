@@ -18,72 +18,87 @@ const BASE_GRUPOS = [
   { id: "gj",     nome: "G e J",  short: "G·J", fonemas: ["GA","GE","GI","GO","GU","JA","JE","JI","JO","JU"] },
 ];
 
+// Revisão fonética (ver doc "VozAtiva — Gravação das Vozes", aba "Prompt:
+// revisão fonética") — cada frase é tecnicamente fundamentada (ponto e modo
+// de articulação, sonoridade reais do PT-BR) mas mantida simples, sem termo
+// técnico, porque quem lê é o paciente, não um linguista. Duas decisões de
+// julgamento registradas aqui:
+// 1) E e O assumem a variante fechada (ê, ô) — a leitura mais neutra da
+//    letra isolada.
+// 2) TI/DI assumem a palatalização comum na fala brasileira ([tʃi]/[dʒi]) —
+//    se as gravações definitivas de voz saírem com pronúncia não
+//    palatalizada, só essas duas frases precisam mudar.
 const BASE_DICAS = {
-  A:"Abra bem a boca, deixe a língua baixa e solte o ar livremente.",
-  E:"Abra a boca pela metade, lábios levemente abertos para os lados.",
-  I:"Lábios afastados para os lados como um sorriso, língua alta.",
-  O:"Arredonde os lábios formando um círculo, língua no meio.",
-  U:"Projete os lábios para frente formando um círculo pequeno.",
-  MA:"Una os lábios, direcione o ar pelo nariz e abra a boca.",
-  ME:"Una os lábios, ressoe pelo nariz e abra em E.",
-  MI:"Una os lábios, ressoe pelo nariz e abra em I com sorriso.",
-  MO:"Una os lábios, ressoe pelo nariz e arredonde para O.",
-  MU:"Una os lábios, ressoe pelo nariz e projete para U.",
-  PA:"Una os dois lábios, solte o ar de repente e abra em A.",
-  PE:"Una os lábios, estoure o ar e abra em E.",
-  PI:"Una os lábios, estoure e abra em I com sorriso.",
-  PO:"Una os lábios, estoure e arredonde os lábios para O.",
-  PU:"Una os lábios, estoure e projete os lábios para U.",
-  TA:"Toque a língua atrás dos dentes superiores e solte em A.",
-  TE:"Língua atrás dos dentes, solte o ar e abra em E.",
-  TI:"Língua atrás dos dentes, solte e sorria para I.",
-  TO:"Língua atrás dos dentes, solte e arredonde para O.",
-  TU:"Língua atrás dos dentes, solte e projete para U.",
-  LA:"Língua na parte superior da boca, solte o ar suavemente em A.",
-  LE:"Língua encostada acima, solte e abra em E.",
-  LI:"Língua encostada acima, solte e sorria para I.",
-  LO:"Língua encostada acima, solte e arredonde para O.",
-  LU:"Língua encostada acima, solte e projete para U.",
-  FA:"Dentes sobre o lábio inferior, sopre e abra em A.",
-  FE:"Dentes sobre o lábio inferior, sopre e abra em E.",
-  FI:"Dentes sobre o lábio inferior, sopre e sorria para I.",
-  FO:"Dentes sobre o lábio inferior, sopre e arredonde para O.",
-  FU:"Dentes sobre o lábio inferior, sopre e projete para U.",
-  VA:"Dentes sobre o lábio inferior, vibre e abra em A.",
-  VE:"Dentes sobre o lábio inferior, vibre e abra em E.",
-  VI:"Dentes sobre o lábio inferior, vibre e sorria para I.",
-  VO:"Dentes sobre o lábio inferior, vibre e arredonde para O.",
-  VU:"Dentes sobre o lábio inferior, vibre e projete para U.",
-  NA:"Passe o ar pelo nariz com a língua acima e abra em A.",
-  NE:"Ar pelo nariz, língua acima, abra em E.",
-  NI:"Ar pelo nariz, língua acima, sorria para I.",
-  NO:"Ar pelo nariz, língua acima, arredonde para O.",
-  NU:"Ar pelo nariz, língua acima, projete para U.",
-  DA:"Língua atrás dos dentes superiores, solte suave e abra em A.",
-  DE:"Língua atrás dos dentes, solte suave e abra em E.",
-  DI:"Língua atrás dos dentes, solte suave e sorria para I.",
-  DO:"Língua atrás dos dentes, solte suave e arredonde para O.",
-  DU:"Língua atrás dos dentes, solte suave e projete para U.",
-  BA:"Una os lábios suavemente, solte vibrando e abra em A.",
-  BE:"Lábios unidos, vibre ao soltar e abra em E.",
-  BI:"Lábios unidos, vibre ao soltar e sorria para I.",
-  BO:"Lábios unidos, vibre ao soltar e arredonde para O.",
-  BU:"Lábios unidos, vibre ao soltar e projete para U.",
-  CA:"Fundo da língua no céu da boca, solte o ar forte em A.",
-  CE:"Língua perto dos dentes superiores, sussurre e abra em E.",
-  CI:"Língua perto dos dentes superiores, sussurre e sorria para I.",
-  CO:"Fundo da língua no céu da boca, solte forte e arredonde para O.",
-  CU:"Fundo da língua no céu da boca, solte forte e projete para U.",
-  GA:"Fundo da língua no céu da boca, vibre e abra em A.",
-  GE:"Fundo da língua suave, ressoe na garganta e abra em E.",
-  GI:"Fundo da língua suave, ressoe na garganta e sorria para I.",
-  GO:"Fundo da língua no céu da boca, vibre e arredonde para O.",
-  GU:"Fundo da língua no céu da boca, vibre e projete para U.",
-  JA:"Aproxime a língua do céu da boca, vibre suavemente e abra em A.",
-  JE:"Língua próxima ao céu da boca, vibre suave e abra em E.",
-  JI:"Língua próxima ao céu da boca, vibre suave e sorria para I.",
-  JO:"Língua próxima ao céu da boca, vibre suave e arredonde para O.",
-  JU:"Língua próxima ao céu da boca, vibre suave e projete para U.",
+  A:"Abra bem a boca, deixe a língua baixa e solte o ar pela boca.",
+  E:"Deixe a boca meio aberta, com os lábios levemente esticados para os lados.",
+  I:"Estique levemente os lábios para os lados, deixando a língua bem alta.",
+  O:"Arredonde os lábios em um círculo pequeno, com a língua numa altura média — nem baixa, nem tão alta quanto no U.",
+  U:"Arredonde e projete os lábios para frente, deixando a língua bem alta.",
+  MA:"Feche os lábios, deixe o ar sair pelo nariz e depois abra para o A.",
+  ME:"Feche os lábios, deixe o ar sair pelo nariz e depois abra para o E.",
+  MI:"Feche os lábios, deixe o ar sair pelo nariz e depois abra para o I.",
+  MO:"Feche os lábios, deixe o ar sair pelo nariz e depois abra para o O.",
+  MU:"Feche os lábios, deixe o ar sair pelo nariz e depois abra para o U.",
+  PA:"Junte os lábios, solte o ar de repente e abra para o A.",
+  PE:"Junte os lábios, solte o ar de repente e abra para o E.",
+  PI:"Junte os lábios, solte o ar de repente e abra para o I.",
+  PO:"Junte os lábios, solte o ar de repente e abra para o O.",
+  PU:"Junte os lábios, solte o ar de repente e abra para o U.",
+  TA:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar e abra para o A.",
+  TE:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar e abra para o E.",
+  TI:"Encoste a língua perto da parte de trás dos dentes de cima e solte o ar já puxando a língua para o alto.",
+  TO:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar e abra para o O.",
+  TU:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar e abra para o U.",
+  LA:"Encoste a ponta da língua atrás dos dentes de cima e deixe o ar passar pelos lados da língua antes do A.",
+  LE:"Encoste a ponta da língua atrás dos dentes de cima e deixe o ar passar pelos lados da língua antes do E.",
+  LI:"Encoste a ponta da língua atrás dos dentes de cima e deixe o ar passar pelos lados da língua antes do I.",
+  LO:"Encoste a ponta da língua atrás dos dentes de cima e deixe o ar passar pelos lados da língua antes do O.",
+  LU:"Encoste a ponta da língua atrás dos dentes de cima e deixe o ar passar pelos lados da língua antes do U.",
+  FA:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar e abra para o A.",
+  FE:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar e abra para o E.",
+  FI:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar e abra para o I.",
+  FO:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar e abra para o O.",
+  FU:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar e abra para o U.",
+  VA:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar com a voz e abra para o A.",
+  VE:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar com a voz e abra para o E.",
+  VI:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar com a voz e abra para o I.",
+  VO:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar com a voz e abra para o O.",
+  VU:"Encoste os dentes de cima no lábio de baixo, deixe o ar passar com a voz e abra para o U.",
+  NA:"Encoste a língua atrás dos dentes de cima, deixe o ar sair pelo nariz e abra para o A.",
+  NE:"Encoste a língua atrás dos dentes de cima, deixe o ar sair pelo nariz e abra para o E.",
+  NI:"Encoste a língua atrás dos dentes de cima, deixe o ar sair pelo nariz e abra para o I.",
+  NO:"Encoste a língua atrás dos dentes de cima, deixe o ar sair pelo nariz e abra para o O.",
+  NU:"Encoste a língua atrás dos dentes de cima, deixe o ar sair pelo nariz e abra para o U.",
+  DA:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar com a voz e abra para o A.",
+  DE:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar com a voz e abra para o E.",
+  DI:"Encoste a língua perto da parte de trás dos dentes de cima e solte o ar com a voz já puxando a língua para o alto.",
+  DO:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar com a voz e abra para o O.",
+  DU:"Encoste a ponta da língua atrás dos dentes de cima, solte o ar com a voz e abra para o U.",
+  BA:"Junte os lábios, solte o ar de repente com a voz e abra para o A.",
+  BE:"Junte os lábios, solte o ar de repente com a voz e abra para o E.",
+  BI:"Junte os lábios, solte o ar de repente com a voz e abra para o I.",
+  BO:"Junte os lábios, solte o ar de repente com a voz e abra para o O.",
+  BU:"Junte os lábios, solte o ar de repente com a voz e abra para o U.",
+  CA:"Encoste a parte de trás da língua no céu da boca, solte o ar de repente e abra para o A.",
+  CE:"Aproxime a língua da parte de trás dos dentes de cima, deixe o ar passar fazendo um som contínuo e abra para o E.",
+  CI:"Aproxime a língua da parte de trás dos dentes de cima, deixe o ar passar fazendo um som contínuo e abra para o I.",
+  CO:"Encoste a parte de trás da língua no céu da boca, solte o ar de repente e abra para o O.",
+  CU:"Encoste a parte de trás da língua no céu da boca, solte o ar de repente e abra para o U.",
+  GA:"Encoste a parte de trás da língua no céu da boca, solte o ar de repente com a voz e abra para o A.",
+  // GE/GI e J (JA-JU) são o mesmo som — diferente de CE/CI: a língua fica um
+  // pouco mais atrás (perto do céu da boca, não dos dentes), por isso a
+  // frase marca essa diferença de lugar, não só a de voz (ver problema
+  // sinalizado na revisão: antes a frase de GE/GI/J ficava quase idêntica
+  // à de CE/CI, como se a única diferença fosse ter voz ou não).
+  GE:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o E.",
+  GI:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o I.",
+  GO:"Encoste a parte de trás da língua no céu da boca, solte o ar de repente com a voz e abra para o O.",
+  GU:"Encoste a parte de trás da língua no céu da boca, solte o ar de repente com a voz e abra para o U.",
+  JA:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o A.",
+  JE:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o E.",
+  JI:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o I.",
+  JO:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o O.",
+  JU:"Aproxime a língua do céu da boca, um pouco mais atrás do que no som de S, deixe o ar passar com a voz e abra para o U.",
 };
 
 // Banco de frases motivacionais — uma é sorteada toda vez que a tela
@@ -304,7 +319,14 @@ function expectedDurationRangeMs(fonema) {
 // SpeechRecognition, ou a tentativa atual falhar ao iniciar, cai de volta
 // no heurístico de volume/duração acima só para aquela gravação.
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+// Reaproveitada entre tentativas — igual ao AudioContext em startAudio().
+// Instanciar um SpeechRecognition novo a cada exercício abre uma sessão de
+// captura de microfone própria do motor de reconhecimento, independente do
+// getUserMedia/micStream já reaproveitado; isso é o que fazia o navegador
+// voltar a arbitrar o microfone (e, em alguns navegadores, pedir permissão
+// de novo) a cada exercício, mesmo com o áudio "principal" já corrigido.
 let recognition = null;
+let recognitionCurrentFonema = null; // fonema da tentativa em andamento, lido pelos handlers fixos abaixo
 let recognitionFailed = false; // erro permanente (ex.: permissão negada) — desiste pelo resto da sessão
 let recognitionOutcome = null; // null = ainda sem veredito nesta gravação | true | false
 
@@ -324,9 +346,12 @@ function speechMatchesFonema(transcript, fonema) {
   return t === e || t.includes(e) || e.includes(t);
 }
 
-// Retorna true se a escuta foi iniciada com sucesso (permite decidir, por
-// gravação, se deve confiar no reconhecimento real ou cair no heurístico).
-function startSpeechRecognition(fonema) {
+// Cria a instância UMA ÚNICA VEZ por sessão (ver comentário acima de
+// `recognition`) — os handlers ficam fixos e leem recognitionCurrentFonema
+// (atualizado a cada chamada) em vez de fechar sobre o parâmetro `fonema`,
+// já que agora o mesmo objeto atende várias tentativas.
+function ensureSpeechRecognitionInstance() {
+  if (recognition) return recognition;
   try {
     recognition = new SpeechRecognitionAPI();
     recognition.lang = "pt-BR";
@@ -339,7 +364,7 @@ function startSpeechRecognition(fonema) {
         const result = e.results[i];
         let matched = false;
         for (let k = 0; k < result.length; k++) {
-          if (speechMatchesFonema(result[k].transcript, fonema)) { matched = true; break; }
+          if (speechMatchesFonema(result[k].transcript, recognitionCurrentFonema)) { matched = true; break; }
         }
         if (matched) {
           recognitionOutcome = true; matchDetected = true;
@@ -365,19 +390,28 @@ function startSpeechRecognition(fonema) {
         try { recognition.start(); } catch (e) {}
       }
     };
-    recognition.start();
-    return true;
   } catch (e) {
     recognition = null;
-    return false;
+  }
+  return recognition;
+}
+// Retorna true se a escuta foi iniciada com sucesso (permite decidir, por
+// gravação, se deve confiar no reconhecimento real ou cair no heurístico).
+function startSpeechRecognition(fonema) {
+  recognitionCurrentFonema = fonema;
+  const r = ensureSpeechRecognitionInstance();
+  if (!r) return false;
+  try { r.start(); return true; }
+  catch (e) {
+    // "InvalidStateError" quando já está em execução (ex.: onend ainda não
+    // processou o abort anterior) — nesse caso já está ouvindo, então não é
+    // uma falha real; qualquer outro erro aqui também não é permanente.
+    return true;
   }
 }
 function stopSpeechRecognition() {
   if (!recognition) return;
-  const r = recognition;
-  recognition = null;
-  r.onresult = null; r.onerror = null; r.onend = null;
-  try { r.abort(); } catch (e) {}
+  try { recognition.abort(); } catch (e) {}
 }
 
 // ── Estado configurações ──────────────────────
@@ -398,6 +432,41 @@ let dataArray = null;
 // ou se precisa recriar (stream trocou de verdade, não só pausou/voltou
 // entre exercícios). Ver correção da permissão de microfone repetida.
 let audioGraphStream = null;
+// Nó de origem (createMediaStreamSource) atualmente ligado ao analyser —
+// guardado só pra poder desligá-lo antes de criar um novo a cada gravação
+// (ver startAudio). Sem isso, cada tentativa deixaria um nó de origem
+// antigo ainda conectado à mesma faixa, além do novo.
+let audioGraphSource = null;
+
+// ── Diagnóstico do microfone ──────────────────
+// Instrumentação temporária, sem efeito no comportamento — só loga no
+// console (prefixo "[mic]") o que está acontecendo de verdade com a faixa
+// de áudio e com a permissão, pra investigar relatos de pedido de
+// permissão repetido que não reproduzem no ambiente de teste. Cada faixa
+// de microfone obtida (bootstrapMicPermission, requestMicPermission,
+// retryMicPermission, startAudio, toggleChatAudioRecording) passa por
+// attachMicTrackDiagnostics logo depois de adquirida.
+function micLog(msg, extra) {
+  try { console.warn("[mic] " + msg, extra !== undefined ? extra : ""); } catch (e) {}
+}
+let micPermissionStatusWatched = false;
+function watchMicPermissionStatus() {
+  if (micPermissionStatusWatched || !navigator.permissions || !navigator.permissions.query) return;
+  micPermissionStatusWatched = true;
+  navigator.permissions.query({ name: "microphone" }).then((status) => {
+    micLog("estado inicial da permissão (Permissions API): " + status.state);
+    status.onchange = () => micLog("MUDANÇA no estado da permissão (Permissions API): " + status.state);
+  }).catch((e) => micLog("Permissions API não respondeu para 'microphone' (normal em alguns navegadores)", e && e.message));
+}
+function attachMicTrackDiagnostics(stream, source) {
+  if (!stream) return;
+  stream.getTracks().forEach((t) => {
+    micLog(`faixa obtida via ${source} — label="${t.label}" state=${t.readyState}`);
+    t.addEventListener("ended", () => {
+      micLog(`⚠️ faixa TERMINOU sozinha (evento "ended") — obtida via ${source}, label="${t.label}". Isso é o que força um novo getUserMedia() no próximo startAudio().`);
+    });
+  });
+}
 
 // sons sintéticos (beeps) para feedback
 let sfxCtx = null;
@@ -1647,6 +1716,37 @@ function migrateAccountIds() {
   if (changed) saveUsers(users);
 }
 
+// Conta fixa de administrador para demonstração (admin@admin / 123456),
+// com acesso irrestrito à trilha — ver isCurrentUserAdmin, isGroupUnlocked
+// e skipChallenge. É uma conta do tipo "paciente" normal (progride pela
+// trilha como qualquer paciente), só que sem os bloqueios de pré-requisito
+// e sem limite de pulos. Criada uma única vez, no primeiro carregamento do
+// app neste dispositivo; se a conta já existir, só garante que o selo
+// isAdmin continue marcado (ex.: caso alguém tenha restaurado um backup
+// antigo dos dados sem esse campo).
+async function ensureAdminAccount() {
+  const users = getUsers();
+  const existing = users["admin@admin"];
+  if (existing) {
+    if (!existing.isAdmin) saveUserRecords({ "admin@admin": { ...existing, isAdmin: true } });
+    return;
+  }
+  const passwordSalt = generateSalt();
+  const passwordHash = await hashPassword("123456", passwordSalt);
+  saveUserRecords({
+    "admin@admin": {
+      name: "Administrador", email: "admin@admin", passwordHash, passwordSalt,
+      phone: "", avatar: null, bio: "",
+      role: "paciente", isAdmin: true,
+      progress: { completedGroupIds: [], attempts: {} },
+      accountId: generateAccountId(users), welcomeSeen: false,
+      doctor: "", linkedDoctors: [], pendingInvites: [], friends: [],
+      friendRequestsSent: [], friendRequestsReceived: [],
+      customContent: { groups: [], exercises: [], dicas: {}, audio: {}, groupOrder: [], physicalExercises: [] },
+    },
+  });
+}
+
 function setSignupRole(role) {
   signupRole = role;
   document.getElementById("role-btn-paciente").classList.toggle("active", role === "paciente");
@@ -1734,7 +1834,7 @@ async function handleSignup(e) {
   if (!name || !email) { showAuthError("signup-error", "Preencha nome e e-mail."); return; }
   if (pass.length < 5) { showAuthError("signup-error", "A senha deve ter ao menos 5 caracteres."); return; }
   if (pass !== pass2) { showAuthError("signup-error", "As senhas não coincidem."); return; }
-  if (!/^\(\d{2}\)\d \d{4}-\d{4}$/.test(phone)) { showAuthError("signup-error", "Telefone inválido. Use o formato (XX)X XXXX-XXXX."); return; }
+  if (phone && !/^\(\d{2}\)\d \d{4}-\d{4}$/.test(phone)) { showAuthError("signup-error", "Telefone inválido. Use o formato (XX)X XXXX-XXXX."); return; }
 
   let crmVal = "";
   if (signupRole === "medico") {
@@ -2671,8 +2771,13 @@ async function toggleChatAudioRecording() {
   const btn = document.getElementById("chat-audio-record-btn");
   if (chatRecorder && chatRecorder.state === "recording") { chatRecorder.stop(); return; }
   let stream;
-  try { stream = (micStream && micStream.getTracks().some(t => t.readyState === "live")) ? micStream : await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); }
-  catch (e) { showToast("Não foi possível acessar o microfone.", true); return; }
+  const reusable = micStream && micStream.getTracks().some(t => t.readyState === "live");
+  if (!reusable) micLog("toggleChatAudioRecording: precisou pedir getUserMedia() próprio (micStream indisponível/encerrado)");
+  try {
+    stream = reusable ? micStream : await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+    if (!reusable) attachMicTrackDiagnostics(stream, "toggleChatAudioRecording");
+  }
+  catch (e) { micLog("toggleChatAudioRecording: getUserMedia falhou", e && e.name + ": " + e.message); showToast("Não foi possível acessar o microfone.", true); return; }
   chatRecorderChunks = [];
   try { chatRecorder = new MediaRecorder(stream); }
   catch (e) { showToast("Gravação de áudio não é suportada neste navegador.", true); return; }
@@ -3009,18 +3114,24 @@ function pickVoice() {
   return voiceGender === "female" ? pool[0] : (pool[1] || pool[0]);
 }
 
-// Pasta com uma gravação real por fonema (ex.: fonemas-audio/A.mp3,
-// fonemas-audio/MA.mp3...). Arquivo ausente ou com erro cai
-// automaticamente pra síntese de voz do navegador — não precisa mexer
-// em código pra ir completando as gravações aos poucos.
-const DEFAULT_PHONEME_AUDIO_DIR = "fonemas-audio/";
+// Uma pasta por gênero de voz, cada uma com uma gravação real por fonema
+// (ex.: fonemas-audio/feminina/A.mp3, fonemas-audio/masculina/MA.mp3...).
+// A pasta usada segue o voiceGender selecionado no botão ♀/♂ — uma
+// gravação feminina nunca toca no modo masculino e vice-versa. Arquivo
+// ausente ou com erro cai automaticamente pra síntese de voz do
+// navegador — não precisa mexer em código pra ir completando as
+// gravações de cada gênero aos poucos.
+const PHONEME_AUDIO_DIR_BY_GENDER = {
+  female: "fonemas-audio/feminina/",
+  male: "fonemas-audio/masculina/",
+};
 
 function playPhonemeAudio() {
   const btn = document.getElementById("phoneme-audio-btn");
   const fonema = desafios[currentIndex];
   const sources = [];
   if (activeCustomAudio[fonema]) sources.push(activeCustomAudio[fonema]);
-  sources.push(`${DEFAULT_PHONEME_AUDIO_DIR}${fonema}.mp3`);
+  sources.push(`${PHONEME_AUDIO_DIR_BY_GENDER[voiceGender]}${fonema}.mp3`);
   tryPhonemeAudioSources(sources, 0, btn, fonema);
 }
 
@@ -3279,6 +3390,14 @@ function isCurrentUserDoctor() {
   const u = getUsers()[sessionEmail];
   return !!(u && u.role === "medico");
 }
+// Conta de demonstração com acesso irrestrito à trilha (ver ensureAdminAccount,
+// no boot do arquivo) — nenhuma conta comum pode ganhar isAdmin por conta
+// própria, então isto nunca afeta usuários normais.
+function isCurrentUserAdmin() {
+  if (!sessionEmail) return false;
+  const u = getUsers()[sessionEmail];
+  return !!(u && u.isAdmin);
+}
 
 function replayTour() {
   closePanel("help-panel");
@@ -3301,13 +3420,20 @@ function tourBlockedByOtherOverlay() {
   const welcome = document.getElementById("welcome-overlay");
   return (welcome && !welcome.classList.contains("hidden")) || !permOverlay.classList.contains("hidden");
 }
+// Administrador (ver isCurrentUserAdmin): nenhum tour guiado aparece
+// sozinho — é uma conta de demonstração/teste, não alguém vendo a tela
+// pela primeira vez. Guarda em cada maybeStart*Tour (não em startTour
+// em si) pra não afetar replayTour(), que continua disponível se o
+// próprio admin abrir o tour manualmente pelo painel de ajuda.
 function maybeStartHomeTour() {
+  if (isCurrentUserAdmin()) return;
   const key = isCurrentUserDoctor() ? "homeMedico" : "home";
   if (!localStorage.getItem("vozativa_tour_" + key + "_seen")) {
     setTimeout(() => { if (!screenHome.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour(key); }, 600);
   }
 }
 function maybeStartPathTour() {
+  if (isCurrentUserAdmin()) return;
   if (!localStorage.getItem("vozativa_tour_path_seen")) {
     setTimeout(() => { if (!screenPath.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("path"); }, 500);
   }
@@ -3316,16 +3442,19 @@ function maybeStartPathTour() {
 // — o médico entrava direto sem nenhuma orientação de onde adicionar
 // pacientes ou o que cada card mostra.
 function maybeStartDoctorPanelTour() {
+  if (isCurrentUserAdmin()) return;
   if (!localStorage.getItem("vozativa_tour_doctorPanel_seen")) {
     setTimeout(() => { if (!screenDoctor.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("doctorPanel"); }, 500);
   }
 }
 function maybeStartDoctorDetailTour() {
+  if (isCurrentUserAdmin()) return;
   if (!localStorage.getItem("vozativa_tour_doctorDetail_seen")) {
     setTimeout(() => { if (!screenDoctor.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("doctorDetail"); }, 500);
   }
 }
 function maybeStartAppTour() {
+  if (isCurrentUserAdmin()) return;
   if (!localStorage.getItem("vozativa_tour_app_seen")) {
     setTimeout(() => { if (!screenApp.classList.contains("hidden") && !tourBlockedByOtherOverlay()) startTour("app"); }, 500);
   }
@@ -3353,6 +3482,9 @@ window.addEventListener("resize", () => {
 // trilha depois dela pra sempre. Ver F1 na auditoria.
 function isPlayableGroup(g) { return !!(g && g.fonemas && g.fonemas.length); }
 function isGroupUnlocked(gi, progress) {
+  // Administrador: qualquer fase com conteúdo é sempre acessível, sem
+  // depender da fase anterior ter sido concluída (ver isCurrentUserAdmin).
+  if (isCurrentUserAdmin()) return true;
   if (progress.completedGroupIds.includes(grupos[gi].id)) return true;
   for (let i = gi - 1; i >= 0; i--) {
     if (!isPlayableGroup(grupos[i])) continue;
@@ -3382,7 +3514,7 @@ function renderPathTree(introAnimation, celebrateIndex) {
     // concluídas a qualquer momento) — sem isso, a fase concluída ficava
     // com o ícone de check mas desabilitada (clique não fazia nada).
     const playable = isPlayableGroup(g);
-    const unlocked = playable && isGroupUnlocked(gi, progress);
+    const unlocked = playable && isGroupUnlocked(gi, progress); // já considera isCurrentUserAdmin()
     if (completed) doneCount++;
     // Fase personalizada (grupo/exercício adicionado pelo médico) ainda
     // não concluída: ícone azul + selo "i". Uma vez concluída, vira um nó
@@ -3778,12 +3910,14 @@ function prevChallenge() {
 // "Desafio anterior" e respondesse um pulado, reabrindo uma vaga de
 // pulo indefinidamente (ver F6 na auditoria).
 function skipChallenge() {
-  if (phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) return;
+  // Administrador: sem limite de pulos por fase (ver isCurrentUserAdmin).
+  const isAdmin = isCurrentUserAdmin();
+  if (!isAdmin && phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) return;
   if (isRecording) stopAudio();
   phaseSegmentStatus[currentIndex - phaseStartIndex] = "skipped";
   phaseSkipsUsed++;
   playBeep(480, 0.08);
-  if (phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) {
+  if (!isAdmin && phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) {
     showToast("Limite de 3 pulos nesta fase — os próximos exercícios precisam ser respondidos.");
   }
   advance();
@@ -3791,7 +3925,7 @@ function skipChallenge() {
 function updateSkipButtonState() {
   const skipBtn = document.getElementById("btn-skip");
   if (!skipBtn) return;
-  const reachedLimit = phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE;
+  const reachedLimit = !isCurrentUserAdmin() && phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE;
   skipBtn.disabled = reachedLimit;
   skipBtn.title = reachedLimit ? "Limite de 3 pulos nesta fase já foi usado" : "";
 }
@@ -3831,12 +3965,16 @@ function setBtnLoading(btn, loading) {
 // tela — o único jeito de o navegador perguntar de novo é se o próprio
 // usuário nunca respondeu de fato ao pedido nativo dele.
 async function bootstrapMicPermission() {
-  if (micGranted || micDenied) return;
+  watchMicPermissionStatus();
+  if (micGranted || micDenied) { micLog("bootstrapMicPermission chamado de novo, mas já resolvido (micGranted=" + micGranted + " micDenied=" + micDenied + ") — ignorado."); return; }
   if (localStorage.getItem("vozativa_mic_asked") === "1") {
+    micLog("bootstrap: já perguntado antes neste dispositivo — tentando reusar em silêncio via getUserMedia()");
     try {
       micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+      attachMicTrackDiagnostics(micStream, "bootstrapMicPermission (silencioso)");
       micGranted = true;
     } catch (e) {
+      micLog("bootstrap: getUserMedia falhou", e && e.name + ": " + e.message);
       micDenied = true;
     }
     updateMicBlockedUI();
@@ -3854,8 +3992,9 @@ async function requestMicPermission(evt) {
   const btn = evt && evt.currentTarget;
   setBtnLoading(btn, true);
   localStorage.setItem("vozativa_mic_asked", "1");
-  try { micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); micGranted = true; }
-  catch(e) { micDenied = true; }
+  micLog("requestMicPermission: pedido explícito pela tela de permissão inicial");
+  try { micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); attachMicTrackDiagnostics(micStream, "requestMicPermission"); micGranted = true; }
+  catch(e) { micLog("requestMicPermission falhou", e && e.name + ": " + e.message); micDenied = true; }
   setBtnLoading(btn, false);
   hideOverlay(permOverlay);
   updateMicBlockedUI();
@@ -3875,11 +4014,14 @@ async function retryMicPermission(evt) {
   const btn = evt && evt.currentTarget;
   setBtnLoading(btn, true);
   localStorage.setItem("vozativa_mic_asked", "1");
+  micLog("retryMicPermission: botão 'Ativar microfone' dentro do exercício");
   try {
     micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+    attachMicTrackDiagnostics(micStream, "retryMicPermission");
     micGranted = true; micDenied = false;
     playBeep(660, 0.12);
   } catch (e) {
+    micLog("retryMicPermission falhou", e && e.name + ": " + e.message);
     micDenied = true;
   }
   setBtnLoading(btn, false);
@@ -3922,14 +4064,26 @@ function clearRecordingTimers() {
 }
 
 async function startAudio() {
-  if (!micStream || micStream.getTracks().every(t => t.readyState === "ended")) {
+  const tracksNow = micStream ? micStream.getTracks() : [];
+  const needsNewStream = !micStream || tracksNow.length === 0 || tracksNow.every(t => t.readyState === "ended");
+  if (needsNewStream) {
+    micLog(
+      "startAudio: PRECISOU pedir getUserMedia() de novo — " +
+      (!micStream ? "micStream ainda não existia" : tracksNow.length === 0 ? "micStream sem nenhuma faixa" : "todas as faixas já estavam 'ended'"),
+      tracksNow.map(t => ({ label: t.label, state: t.readyState }))
+    );
     // Se micGranted já era true, isto é uma RE-tentativa (a permissão que
     // já tínhamos foi perdida de algum jeito — revogada pelo usuário, pelo
     // navegador ou pelo sistema) — mensagem diferente da primeira vez,
     // pra deixar claro que algo mudou, não que é a primeira vez pedindo.
     const wasPreviouslyGranted = micGranted;
-    try { micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS); micGranted = true; micDenied = false; }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+      attachMicTrackDiagnostics(micStream, "startAudio (retomada)");
+      micGranted = true; micDenied = false;
+    }
     catch(e) {
+      micLog("startAudio: getUserMedia falhou na retomada", e && e.name + ": " + e.message);
       micDenied = true;
       updateMicBlockedUI();
       showToast(
@@ -3953,30 +4107,41 @@ async function startAudio() {
     mediaRecorder.start();
   } catch (e) { mediaRecorder = null; }
 
-  // Reaproveita o MESMO AudioContext entre exercícios em vez de fechar e
-  // recriar um a cada tentativa — fechar um AudioContext ligado à mesma
-  // faixa de microfone repetidamente é o gatilho mais comum pra o
-  // navegador derrubar a sessão de captura por trás dos panos, fazendo o
-  // getUserMedia seguinte pedir permissão de novo (era isso que fazia a
-  // permissão de microfone ser solicitada a cada exercício). Só recria
-  // se realmente não existir um contexto vivo, ou se o stream mudou
-  // (ex.: paciente negou e depois reativou o microfone no meio do treino).
-  if (!audioCtx || audioCtx.state === "closed" || audioGraphStream !== micStream) {
+  // Reaproveita o MESMO AudioContext (e a MESMA faixa de microfone) entre
+  // exercícios em vez de fechar e recriar um a cada tentativa — fechar um
+  // AudioContext ligado à mesma faixa de microfone repetidamente é o
+  // gatilho mais comum pra o navegador derrubar a sessão de captura por
+  // trás dos panos, fazendo o getUserMedia seguinte pedir permissão de
+  // novo (era isso que fazia a permissão de microfone ser solicitada a
+  // cada exercício).
+  if (!audioCtx || audioCtx.state === "closed") {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioCtx.createAnalyser();
-    // smoothingTimeConstant mais baixo = a barra reage mais rápido ao volume
-    // real (menos "atraso" visual e na detecção do fim da fala).
-    analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.35;
-    // GainNode amplifica o sinal do microfone antes da análise — ajuda a
-    // captar vozes mais baixas ou em ambientes com um pouco de ruído, sem
-    // exigir nenhuma configuração manual do paciente.
-    const micGain = audioCtx.createGain();
-    micGain.gain.value = MIC_GAIN;
-    audioCtx.createMediaStreamSource(micStream).connect(micGain).connect(analyser);
-    audioGraphStream = micStream;
   } else if (audioCtx.state === "suspended") {
     await audioCtx.resume();
   }
+  // MAS a ligação fonte→ganho→analisador é recriada a CADA gravação, mesmo
+  // com o mesmo AudioContext/faixa — isso é diferente de recriar o
+  // AudioContext e não afeta a permissão. É uma falha documentada do
+  // WebAudio: um AnalyserNode ligado uma única vez pode, depois de um
+  // tempo ou de algumas gravações, parar de receber amostras reais
+  // (fica "travado" entregando silêncio) mesmo com a faixa continuando
+  // "live" — sem nenhuma reconexão automática do navegador. Reconectar o
+  // analisador do zero a cada tentativa evita esse travamento (era isso
+  // que fazia o "espectrograma" parar de reagir à voz depois de algumas
+  // gravações, mesmo a gravação em si continuando a funcionar).
+  if (audioGraphSource) { try { audioGraphSource.disconnect(); } catch (e) {} }
+  analyser = audioCtx.createAnalyser();
+  // smoothingTimeConstant mais baixo = a barra reage mais rápido ao volume
+  // real (menos "atraso" visual e na detecção do fim da fala).
+  analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.35;
+  // GainNode amplifica o sinal do microfone antes da análise — ajuda a
+  // captar vozes mais baixas ou em ambientes com um pouco de ruído, sem
+  // exigir nenhuma configuração manual do paciente.
+  const micGain = audioCtx.createGain();
+  micGain.gain.value = MIC_GAIN;
+  audioGraphSource = audioCtx.createMediaStreamSource(micStream);
+  audioGraphSource.connect(micGain).connect(analyser);
+  audioGraphStream = micStream;
   dataArray = new Uint8Array(analyser.fftSize);
   isRecording = true;
   recordingPeak = 0;
@@ -5454,6 +5619,7 @@ function enableDragScroll(el, shouldActivate) {
 // BOOT
 // ══════════════════════════════════════════════
 migrateAccountIds();
+ensureAdminAccount();
 loadThemePreference();
 loadReducedMotionPreference();
 initAuthUI();

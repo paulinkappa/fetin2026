@@ -642,7 +642,12 @@ body.dark-mode .dd-icon-danger { background: #3b1212 !important; }
 .credits-row:first-child { border-top: none; }
 .credits-label { font-size: .82rem; font-weight: 700; color: var(--ink-soft); }
 .credits-value { font-size: .88rem; font-weight: 800; color: var(--ink); text-align: right; }
-.credits-value.pending { color: var(--ink-soft); font-weight: 600; font-style: italic; }
+.credits-subtitle { font-size: .82rem; font-weight: 800; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 10px; }
+.credits-consultants { display: flex; flex-direction: column; gap: 14px; }
+.consultant-item { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg); }
+.consultant-name { margin: 0 0 4px; font-size: .86rem; font-weight: 800; color: var(--ink); }
+.consultant-role { font-weight: 600; color: var(--brand-700); }
+.consultant-note { margin: 0; font-size: .8rem; font-weight: 500; color: var(--ink-soft); line-height: 1.5; }
 
 /* ══════════════════════════════════════════════
    TOUR GUIADO (spotlight)
