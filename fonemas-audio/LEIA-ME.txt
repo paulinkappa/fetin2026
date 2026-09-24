@@ -1,0 +1,53 @@
+PASTA DE ÁUDIO PADRÃO DOS FONEMAS
+==================================
+
+Como funciona
+-------------
+Ao clicar no alto-falante de um fonema, o app tenta tocar, nesta ordem:
+  1. Áudio personalizado que o fonoaudiólogo subiu pra aquele paciente
+     (se houver)
+  2. Um arquivo aqui nesta pasta, chamado "<FONEMA>.mp3" (ex.: A.mp3,
+     MA.mp3, TE.mp3...)
+  3. Se o arquivo não existir (ou der erro), cai automaticamente pra
+     síntese de voz do navegador (Web Speech API) — comportamento atual
+  4. Se nem isso o navegador suportar, toca um beep
+
+Ou seja: basta colocar os arquivos .mp3 aqui, com o nome exato do
+fonema em maiúsculas, que eles passam a ser usados — sem precisar
+mexer em nenhum código (ver playPhonemeAudio em script.js).
+
+Nomes exatos esperados (65 arquivos)
+-------------------------------------
+Vogais:      A.mp3  E.mp3  I.mp3  O.mp3  U.mp3
+
+M e P:  MA.mp3 ME.mp3 MI.mp3 MO.mp3 MU.mp3
+        PA.mp3 PE.mp3 PI.mp3 PO.mp3 PU.mp3
+
+T e L:  TA.mp3 TE.mp3 TI.mp3 TO.mp3 TU.mp3
+        LA.mp3 LE.mp3 LI.mp3 LO.mp3 LU.mp3
+
+F e V:  FA.mp3 FE.mp3 FI.mp3 FO.mp3 FU.mp3
+        VA.mp3 VE.mp3 VI.mp3 VO.mp3 VU.mp3
+
+N e D:  NA.mp3 NE.mp3 NI.mp3 NO.mp3 NU.mp3
+        DA.mp3 DE.mp3 DI.mp3 DO.mp3 DU.mp3
+
+B e C:  BA.mp3 BE.mp3 BI.mp3 BO.mp3 BU.mp3
+        CA.mp3 CE.mp3 CI.mp3 CO.mp3 CU.mp3
+
+G e J:  GA.mp3 GE.mp3 GI.mp3 GO.mp3 GU.mp3
+        JA.mp3 JE.mp3 JI.mp3 JO.mp3 JU.mp3
+
+Pode completar aos poucos: um fonema sem arquivo simplesmente continua
+usando a voz sintetizada do navegador até você adicionar o .mp3 dele.
+
+Recomendações de gravação
+--------------------------
+- Voz humana real, pronúncia clara e pausada, sem ruído de fundo
+- Volume normalizado (parecido entre todos os arquivos, pra não ter uns
+  mais altos que outros)
+- Curto: só o fonema, sem silêncio longo antes/depois
+- Formato .mp3 (outros formatos como .ogg/.wav também tocam no
+  navegador, mas o código busca ".mp3" por padrão — se usar outro
+  formato, ajuste a extensão em DEFAULT_PHONEME_AUDIO_DIR/
+  playPhonemeAudio no script.js)

@@ -4,7 +4,19 @@ $Root = Split-Path -Parent $PSScriptRoot
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://127.0.0.1:$Port/")
 $listener.Prefixes.Add("http://localhost:$Port/")
-$listener.Start()
+try {
+  $listener.Start()
+} catch {
+  Write-Output ""
+  Write-Output "Nao consegui iniciar o servidor na porta $Port."
+  Write-Output "Motivo mais provavel: ja tem um servidor VozAtiva rodando em outra janela."
+  Write-Output "Isso e normal e nao e um problema - pode fechar esta janela."
+  Write-Output "Se o navegador nao abrir http://localhost:$Port sozinho, abra manualmente."
+  Write-Output ""
+  Write-Output ("Detalhe tecnico: " + $_.Exception.Message)
+  Read-Host "Pressione Enter para fechar"
+  exit 1
+}
 Write-Output "Serving $Root on http://localhost:$Port/"
 
 $mime = @{
