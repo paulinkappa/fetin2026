@@ -1,3 +1,5 @@
+<img src="identidade-visual/logo.svg" alt="Logo do VozAtiva" width="72" height="72" />
+
 # VozAtiva
 
 Aplicativo web de treino de fala para pessoas em acompanhamento fonoaudiológico, com trilha de progressão por fases (inspirada no Duolingo) e elementos sociais (amigos, ranking). O paciente vê um fonema, ouve a pronúncia correta, grava a própria voz e recebe feedback automático e contínuo. O fonoaudiólogo acompanha o progresso de seus pacientes vinculados, audita as gravações e personaliza exercícios.
@@ -52,6 +54,7 @@ Nenhuma dependência de terceiros é baixada em tempo de execução, exceto duas
 │   ├── masculina/                # 65 gravações reais (voz masculina — Paulo Ricardo)
 │   └── LEIA-ME.txt              # como funciona a escolha/fallback de áudio
 ├── avatares/                    # ícones de perfil predefinidos (SVG)
+├── identidade-visual/           # logo e QR code do repositório (SVG + PNG)
 ├── docs/
 │   ├── ARQUITETURA.md           # como o código está organizado por dentro
 │   └── CONTEXTO_PROJETO_v5.txt  # changelog detalhado, rodada a rodada
@@ -93,3 +96,9 @@ Não há suíte de testes automatizados — é um projeto de demonstração acad
 - **`docs/CONTEXTO_PROJETO_v5.txt`** é o histórico completo de decisões, uma entrada por rodada de trabalho — consulte antes de mudar algo que pareça estranho à primeira vista; provavelmente já foi discutido e tem um motivo registrado ali.
 - **`docs/ARQUITETURA.md`** explica o modelo de dados, as telas e onde mexer para cada tipo de mudança comum.
 - Decisões de escopo conscientes (não são pendências esquecidas): sem backend real (tudo fica por dispositivo), sem migração de senha ao trocar o esquema de hash, sem teste clínico formal — o app é um complemento de apoio, não substitui o acompanhamento profissional.
+
+## Acesso rápido
+
+<img src="identidade-visual/qrcode-github.svg" alt="QR code para este repositório no GitHub" width="160" />
+
+Aponte a câmera do celular pra abrir este repositório.
