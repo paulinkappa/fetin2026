@@ -57,6 +57,8 @@ Nenhuma dependência de terceiros é baixada em tempo de execução, exceto duas
 ├── identidade-visual/           # logo e QR code do repositório (SVG + PNG)
 ├── docs/
 │   ├── ARQUITETURA.md           # como o código está organizado por dentro
+│   ├── ROADMAP.md               # planos futuros — implementado x planejado x possibilidade
+│   ├── MODELO-DE-NEGOCIO.md     # análise de monetização (nenhuma decisão tomada ainda)
 │   └── CONTEXTO_PROJETO_v5.txt  # changelog detalhado, rodada a rodada
 ├── .claude/
 │   ├── launch.json              # configuração do servidor local de dev
@@ -95,6 +97,8 @@ Não há suíte de testes automatizados — é um projeto de demonstração acad
 - **Cache-busting manual**: `index.html` referencia `script.js?v=N` e `style.css?v=N`. Depois de editar um desses dois arquivos, incremente o `v=` correspondente em `index.html`, senão o navegador pode continuar servindo a versão em cache.
 - **`docs/CONTEXTO_PROJETO_v5.txt`** é o histórico completo de decisões, uma entrada por rodada de trabalho — consulte antes de mudar algo que pareça estranho à primeira vista; provavelmente já foi discutido e tem um motivo registrado ali.
 - **`docs/ARQUITETURA.md`** explica o modelo de dados, as telas e onde mexer para cada tipo de mudança comum.
+- **`docs/ROADMAP.md`** lista funcionalidades planejadas, evolução de arquitetura/segurança e melhorias futuras — separando claramente o que já está implementado do que é só planejado ou possibilidade em análise.
+- **`docs/MODELO-DE-NEGOCIO.md`** traz a análise de monetização (modelo, preço, custos) caso o projeto evolua para produto comercial — nenhuma decisão de comercializar foi tomada.
 - Decisões de escopo conscientes (não são pendências esquecidas): sem backend real (tudo fica por dispositivo), sem migração de senha ao trocar o esquema de hash, sem teste clínico formal — o app é um complemento de apoio, não substitui o acompanhamento profissional.
 
 ## Acesso rápido
