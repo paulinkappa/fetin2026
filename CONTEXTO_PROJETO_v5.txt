@@ -1,6 +1,6 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-09-23 (Rodada 57)
+  Última atualização: 2026-09-24 (Rodada 60)
 =============================================
 
 ── SOBRE O PROJETO ──────────────────────────
@@ -2435,8 +2435,136 @@ Rodada 57 — 2026-09-23
     arquivos (TI e DI, feminina e masculina) e mandei pro usuário
     confirmar se saíram palatalizados como a instrução de BASE_DICAS
     assume — resposta ainda pendente no momento deste registro
+  - **Atualização**: usuário confirmou ouvindo — TI/DI saíram
+    palatalizados corretamente nas duas vozes. A suposição registrada
+    na Rodada 51 (e mantida como "reversível se as gravações saírem
+    diferentes") se confirma verdadeira; nenhuma mudança de texto
+    necessária em BASE_DICAS. Pendência encerrada
   - Cache-busting: script.js v=53 → v=54 (por causa do fix do telefone)
   - Commit preparado com: fix do telefone (script.js), cache-busting
     (index.html), e os 65 arquivos de áudio das Rodadas 51-56
     (fonemas-audio/feminina/ e masculina/, ainda não commitados até
     aqui apesar de já estarem no projeto há várias rodadas)
+  - **Atualização**: usuário confirmou ouvindo — TI/DI saíram
+    palatalizados corretamente nas duas vozes. A suposição registrada
+    na Rodada 51 (e mantida como "reversível se as gravações saírem
+    diferentes") se confirma verdadeira; nenhuma mudança de texto
+    necessária em BASE_DICAS. Pendência encerrada
+
+Rodada 58 — 2026-09-23
+  - Usuário pediu pra aumentar as bolinhas decorativas da tela de
+    login e dar um movimento suave e contínuo. Bolhas (.o1/.o2/.o3)
+    aumentadas (220→300px, 160→220px, 90→125px) e a animação `float-y`
+    (só balanço vertical de 6px) trocada por uma nova `float-drift`
+    (translate X/Y + leve escala, percurso assimétrico, duração/atraso
+    diferentes por bolha pra nunca sincronizarem) — testado ao vivo
+    comparando capturas em momentos diferentes, movimento confirmado
+  - Usuário pediu mais bolinhas — adicionadas o4/o5/o6 (70px, 170px,
+    46px) espalhadas pelo painel, mesmo estilo e animação, sem cobrir
+    o bloco de texto. Total: 6 bolhas. Cache-busting style.css v=57→58
+  - **Nota de processo**: essas duas mudanças não foram registradas no
+    changelog no momento (só agora, na Rodada 59) — quebra da própria
+    regra de "uma entrada por rodada de mudança de código"; sem
+    consequência prática porque nada foi perdido, mas vale reforçar o
+    hábito
+
+Rodada 59 — 2026-09-24 — REVISÃO FINAL PRÉ-APRESENTAÇÃO
+  - Apresentação HOJE às 18h (até sábado 11h). Usuário pediu uma
+    revisão geral e profunda — lógica interna, cada elemento/fluxo,
+    erros/inconsistências/pontos frágeis, o que pode falhar em uso
+    real, o que está incompleto — com levantamento final priorizado
+    (crítico/importante/depois)
+  - Feita via 2 auditorias profundas em paralelo (lógica interna do
+    script.js; UX/acessibilidade/responsivo/copy do index.html+CSS),
+    seguidas de correção e teste ao vivo dos achados mais graves.
+    Achados CRÍTICOS confirmados e corrigidos:
+    1) Janela de 380ms sem trava entre confirmar uma resposta
+       (finishRecording) e avançar pro próximo fonema (advance) —
+       clicar Gravar/Pular/Anterior de novo nessa janela causava
+       avanço duplo com pulo silencioso de fonema e tentativa contada
+       em dobro. Corrigido com flag `advancePending` checada nos 3
+       gatilhos (toggleRecording, skipChallenge, prevChallenge) e
+       limpa em advance()/startPhase()/restartPhase(). Testado ao
+       vivo: os 3 gatilhos confirmados bloqueados dentro da janela e
+       funcionando normal fora dela
+    2) Retorno de saveUserRecords (localStorage cheio) ignorado em
+       registerPhaseAttempt — paciente via a tela de "Parabéns"
+       mesmo se o progresso não tivesse sido salvo de verdade, sem
+       aviso persistente (só um toast que passa). Corrigido:
+       registerPhaseAttempt agora retorna se salvou; finishPhase usa
+       isso pra trocar o título/mensagem/medalha por um aviso
+       explícito e não disparar confete quando a gravação falhou
+    3) Esc nas boas-vindas/permissão de microfone não gravava o flag
+       de "já visto" (welcomeSeen / vozativa_mic_asked) — o overlay
+       podia voltar a aparecer em loop. Corrigido tratando os dois
+       ids como caso especial no handler de Esc, chamando
+       closeWelcomeOverlay()/skipPermission() em vez de hideOverlay()
+       puro. Testado ao vivo: Esc nos dois fecha e persiste o flag;
+       recarregando a página nenhum dos dois reaparece
+    4) id="challenge-view" tinha sido removido do HTML numa limpeza
+       antiga de ids órfãos (busca só pegou uso em JS, não em CSS) —
+       o grid de 2 colunas pro modo paisagem (celular deitado, altura
+       ≤560px) nunca se aplicava, ficando tudo empilhado na vertical.
+       Corrigido devolvendo o id ao div certo em index.html. Testado
+       ao vivo em 700×380: grid de 2 colunas confirmado aplicando
+    - Além dos críticos, corrigidos 2 achados MENORES rápidos e sem
+      risco: sobreposição de áudio ao clicar 2x rápido no botão de
+      tocar fonema (guardada instância atual, pausa a anterior antes
+      de tocar a nova); inconsistência "Grupo X" vs "Fase X" pro
+      mesmo conceito (padronizado pra "Fase X" no rótulo do treino e
+      no texto de ajuda)
+    - Cache-busting: script.js v=54 → v=56 (dois fixes desde o v=54:
+      Esc + challenge-view foram no v=55; áudio + terminologia no v=56)
+    - Pendências que sobraram, não corrigidas hoje (achados reais mas
+      menor risco/esforço maior pro tempo disponível): vídeo de
+      exercício físico (até 60MB) pode ficar órfão no IndexedDB se o
+      localStorage falhar ao salvar a referência (mesma classe de
+      problema do item 2, só que sem checagem ainda); áudio de revisão
+      cresce sem purga pra paciente sem médico vinculado; listeners
+      acumulados em wireGroupOrderDrag (sem bug visível, só trabalho
+      redundante numa sessão de edição longa); hover de botão de
+      excluir sem cor de dark mode no Editor de Exercícios (só admin
+      vê); ID órfão em completedGroupIds/reviews se um médico excluir
+      uma fase que o paciente já tinha em progresso/revisão
+
+Rodada 60 — 2026-09-24
+  - Usuário reportou o balão do tutorial "Este card mostra fonemas que
+    você mesmo(a) precisa retreinar..." apontando pro lugar errado, e
+    pediu revisão completa de novo (lógica, fluxos, estados,
+    componentes, integrações, responsividade, regressão desde as
+    últimas mudanças) + implementação de tudo que for necessário,
+    terminando com commit e push pro GitHub
+  - Causa raiz do balão: renderPathTree() faz um scrollIntoView
+    "smooth" pra centralizar a fase atual (script.js:3603) ao entrar
+    na trilha, e startTour("path") dispara 500ms depois — se a
+    animação de rolagem ainda não tivesse terminado nesse momento, o
+    tour media a posição do alvo (.remedial-node) no meio do scroll e
+    nunca mais corrigia, porque só havia listener de "resize", não de
+    "scroll". Corrigido adicionando `scroll` (capture:true, pega
+    rolagem de qualquer contêiner) ao lado do `resize` existente, nos
+    3 pontos que já gerenciavam esse listener (startTour,
+    showOnlyScreen ao trocar de tela, endTour) — o balão agora se
+    autocorrige em tempo real durante qualquer rolagem, não só o caso
+    específico reportado
+  - Revisados os outros 12 passos de tutorial (home, homeMedico, path,
+    app, doctorPanel, doctorDetail): nenhum outro usa scrollIntoView
+    em lugar nenhum do arquivo (confirmado por busca — só existia essa
+    ocorrência), então nenhum outro tinha esse problema. Todos os
+    seletores de alvo (`#profile-btn`, `#settings-btn`, `.home-start`,
+    `.path-node.unlocked`, `#screen-app .back-btn`, `#gender-btn`,
+    `#help-btn`, `#phoneme-audio-btn`, `.waveform-wrapper`,
+    `#btn-record`, `#add-patient-id`, `.patient-card`,
+    `#detail-reviews-list`, `#detail-error-bars`) conferidos existindo
+    de verdade no HTML ou gerados via JS
+  - Testado ao vivo simulando o cenário exato do relato (paciente com
+    progresso até N e D, precisando rolar pra ver a fase atual): o
+    spotlight ficou a exatos 10px do card Revisão nas 4 bordas — a
+    margem intencional do desenho, não um desalinhamento. Segundo
+    passo do tour (nó da fase atual) também conferido certo
+  - Regressão: reconferidos ao vivo os fixes da Rodada 59 (avanço
+    único por resposta, painel de créditos, alternância de tema
+    escuro) — tudo funcionando, zero erro no console em toda a sessão
+    de teste
+  - Nenhum código incompleto/temporário/TODO adicional encontrado além
+    do que já tinha sido varrido nas Rodadas 56 e 59
+  - Cache-busting: script.js v=56 → v=57

@@ -224,6 +224,12 @@ function groupsWithIntervention(user) {
 
 // ── Estado app ────────────────────────────────
 let currentIndex       = 0;
+// Trava entre "resposta confirmada" (finishRecording agenda advance() daqui
+// a 380ms, tempo só pra animação do selo ser percebida) e "próximo desafio
+// carregado" — sem isso, clicar Gravar/Pular/Anterior de novo dentro dessa
+// janela chama advance() uma segunda vez, pulando um fonema em silêncio e
+// contando a tentativa em dobro (ver auditoria pré-apresentação).
+let advancePending      = false;
 let isRecording         = false;
 let micGranted         = false;
 let micDenied           = false;
@@ -704,6 +710,7 @@ function showOnlyScreen(name) {
   if (currentTourKey && currentTourKey !== name) {
     document.getElementById("tour-overlay").classList.add("hidden");
     window.removeEventListener("resize", repositionTourStep);
+    window.removeEventListener("scroll", repositionTourStep, true);
     currentTourKey = null;
   }
   const previousName = activeScreenName;
@@ -917,7 +924,16 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (activeDropdown) { closeDropdowns(); return; }
     const top = overlayStack[overlayStack.length - 1];
-    if (top) { hideOverlay(top.el); return; }
+    if (top) {
+      // welcome-overlay e perm-overlay não podem fechar por hideOverlay()
+      // puro — cada um grava seu próprio flag de "já visto" (welcomeSeen /
+      // vozativa_mic_asked) dentro da função específica; sem isso, Esc
+      // deixa o app preso mostrando o mesmo overlay de novo a cada tela.
+      if (top.el.id === "welcome-overlay") { closeWelcomeOverlay(); return; }
+      if (top.el.id === "perm-overlay") { skipPermission(); return; }
+      hideOverlay(top.el);
+      return;
+    }
     if (!screenAccountPicker.classList.contains("hidden") && !document.getElementById("account-picker-password-view").classList.contains("hidden")) {
       showAccountPickerList();
     }
@@ -3126,9 +3142,17 @@ const PHONEME_AUDIO_DIR_BY_GENDER = {
   male: "fonemas-audio/masculina/",
 };
 
+// Instância de áudio de fonema tocando no momento — clicar de novo no botão
+// de ouvir antes do som anterior terminar criava um segundo <audio> sem
+// parar o primeiro, sobrepondo os dois e deixando o ícone "tocando" preso
+// no estado de quem terminasse primeiro (ver auditoria pré-apresentação).
+let currentPhonemeAudio = null;
+
 function playPhonemeAudio() {
   const btn = document.getElementById("phoneme-audio-btn");
   const fonema = desafios[currentIndex];
+  if (currentPhonemeAudio) { currentPhonemeAudio.pause(); currentPhonemeAudio = null; }
+  speechSynthesis.cancel();
   const sources = [];
   if (activeCustomAudio[fonema]) sources.push(activeCustomAudio[fonema]);
   sources.push(`${PHONEME_AUDIO_DIR_BY_GENDER[voiceGender]}${fonema}.mp3`);
@@ -3139,13 +3163,14 @@ function tryPhonemeAudioSources(sources, i, btn, fonema) {
   if (i >= sources.length) { speakPhonemeFallback(fonema, btn); return; }
   btn.classList.add("playing");
   const audioEl = new Audio(sources[i]);
+  currentPhonemeAudio = audioEl;
   let advanced = false;
   const next = () => {
     if (advanced) return;
     advanced = true;
     tryPhonemeAudioSources(sources, i + 1, btn, fonema);
   };
-  audioEl.onended = () => btn.classList.remove("playing");
+  audioEl.onended = () => { if (currentPhonemeAudio === audioEl) { currentPhonemeAudio = null; btn.classList.remove("playing"); } };
   audioEl.onerror = next;
   audioEl.play().catch(next);
 }
@@ -3283,6 +3308,13 @@ function startTour(key) {
   closeDropdowns();
   document.getElementById("tour-overlay").classList.remove("hidden");
   window.addEventListener("resize", repositionTourStep);
+  // "capture: true" pra pegar rolagem em QUALQUER contêiner com scroll
+  // próprio, não só a janela — sem isso, o passo "path" (Revisão) media a
+  // posição do alvo no meio da animação suave de auto-scroll até a fase
+  // atual (renderPathTree → scrollIntoView "smooth", que continua rolando
+  // depois do balão já ter sido posicionado) e o apontamento ficava
+  // congelado na posição errada, de antes do scroll terminar.
+  window.addEventListener("scroll", repositionTourStep, true);
   showTourStep();
 }
 
@@ -3383,6 +3415,7 @@ function endTour() {
   document.getElementById("tour-overlay").classList.add("hidden");
   if (currentTourKey) localStorage.setItem("vozativa_tour_" + currentTourKey + "_seen", "1");
   window.removeEventListener("resize", repositionTourStep);
+  window.removeEventListener("scroll", repositionTourStep, true);
   currentTourKey = null;
 }
 function isCurrentUserDoctor() {
@@ -3664,6 +3697,7 @@ function startPhase(gi) {
   if (!isGroupUnlocked(gi, progress)) return;
 
   releasePendingPhaseAttempts();
+  advancePending = false;
   phaseSkipsUsed = 0;
   phaseAttemptCommitted = false;
   phaseGroupIndex = gi;
@@ -3708,7 +3742,11 @@ function registerPhaseAttempt(groupId, scorePct) {
   // fácil não inflar a posição no ranking (ver G2 na auditoria).
   progress.groupBestScore[groupId] = Math.max(progress.groupBestScore[groupId] || 0, scorePct);
   registerStreakForToday(progress);
-  saveUserRecords({ [sessionEmail]: user });
+  // Retorna se a gravação realmente aconteceu — saveUsers() já avisa por
+  // toast quando o armazenamento está cheio, mas o toast some sozinho e
+  // pode passar despercebido debaixo do confete da tela de "Parabéns"
+  // (ver finishPhase); aqui o chamador decide se precisa reforçar o aviso.
+  return saveUserRecords({ [sessionEmail]: user });
 }
 
 // Fila de aprovação do médico: cada fase concluída (não cada fonema)
@@ -3830,7 +3868,7 @@ function loadChallenge() {
   phonemeDisplay.textContent = fonema;
   tipText.textContent        = getDica(fonema);
   const gi = fonemaGrupo[currentIndex];
-  groupLabel.textContent = `Grupo ${gi + 1} — ${grupos[gi].nome}`;
+  groupLabel.textContent = `Fase ${gi + 1} — ${grupos[gi].nome}`;
   updateProgress();
   const btnPrev = document.getElementById("btn-prev");
   if (btnPrev) btnPrev.disabled = currentIndex <= phaseStartIndex;
@@ -3900,6 +3938,7 @@ function animateCardEnter() {
 
 // ── Navegação ──────────────────────────────────
 function prevChallenge() {
+  if (advancePending) return;
   if (isRecording) stopAudio();
   if (currentIndex > phaseStartIndex) { currentIndex--; loadChallenge(); playBeep(400, 0.08); }
 }
@@ -3910,6 +3949,7 @@ function prevChallenge() {
 // "Desafio anterior" e respondesse um pulado, reabrindo uma vaga de
 // pulo indefinidamente (ver F6 na auditoria).
 function skipChallenge() {
+  if (advancePending) return;
   // Administrador: sem limite de pulos por fase (ver isCurrentUserAdmin).
   const isAdmin = isCurrentUserAdmin();
   if (!isAdmin && phaseSkipsUsed >= SKIP_LIMIT_PER_PHASE) return;
@@ -3930,6 +3970,7 @@ function updateSkipButtonState() {
   skipBtn.title = reachedLimit ? "Limite de 3 pulos nesta fase já foi usado" : "";
 }
 function advance() {
+  advancePending = false;
   currentIndex++;
   if (currentIndex > phaseEndIndex) finishPhase();
   else loadChallenge();
@@ -4036,6 +4077,7 @@ async function retryMicPermission(evt) {
 // chance ao avançar). Um clique manual durante a gravação também encerra,
 // usando o pico já captado até aquele momento.
 async function toggleRecording() {
+  if (advancePending) return;
   const fonema = desafios[currentIndex];
   // Sem microfone não é possível confirmar nada por voz — o botão já fica
   // desabilitado nesse estado (ver updateMicBlockedUI), isto é só uma trava
@@ -4386,6 +4428,7 @@ function finishRecording(correct) {
   // Espera só o suficiente pra animação do selo de acerto/erro (.3s) ser
   // percebida antes de avançar — reduzido de 550ms para diminuir a demora
   // depois que o paciente já terminou de responder.
+  advancePending = true;
   setTimeout(() => advance(), 380);
 }
 
@@ -4541,23 +4584,28 @@ function finishPhase() {
   // para o ranking de amigos) quando o aproveitamento real atinge o limiar
   // — ver PHASE_COMPLETION_THRESHOLD. A streak é registrada de todo jeito,
   // pela prática do dia, dentro da própria função.
-  registerPhaseAttempt(grupos[phaseGroupIndex].id, scorePct);
+  const progressSaved = registerPhaseAttempt(grupos[phaseGroupIndex].id, scorePct);
   registerPhaseReview(grupos[phaseGroupIndex], scorePct);
   phaseAttemptCommitted = true;
   const completedForReal = scorePct >= PHASE_COMPLETION_THRESHOLD;
 
-  document.getElementById("final-title").textContent = !completedForReal ? "Quase lá!" : (isLast ? "Parabéns!" : "Fase concluída!");
+  document.getElementById("final-title").textContent = !progressSaved
+    ? "Progresso não salvo!"
+    : !completedForReal ? "Quase lá!" : (isLast ? "Parabéns!" : "Fase concluída!");
   document.getElementById("final-subtitle-lead").textContent = !completedForReal
     ? "Você tentou a fase"
     : (isLast ? "Você completou toda a trilha do VozAtiva, terminando na fase" : "Você completou a fase");
-  document.getElementById("final-message").textContent = completedForReal ? randomFinalMessage() : randomLowFinalMessage();
+  document.getElementById("final-message").textContent = !progressSaved
+    ? "O armazenamento deste dispositivo está cheio — seu resultado nesta fase não foi salvo. Libere espaço (ex.: remova conversas antigas do chat) e refaça a fase."
+    : (completedForReal ? randomFinalMessage() : randomLowFinalMessage());
   document.getElementById("final-next-label").textContent = !completedForReal ? "Voltar à trilha" : (isLast ? "Concluir trilha" : "Próxima fase");
   // A medalha fica sempre visível — só a cor muda com o aproveitamento:
   // dourado (100%, perfeito), azul (do limiar de conclusão até 99%, bom) e
   // cinza (abaixo do limiar — a fase ainda não conta como concluída).
   const medalEl = document.querySelector(".final-medal");
   medalEl.classList.remove("tier-blue", "tier-gray");
-  if (scorePct >= 100) { /* dourado — cor padrão do SVG, nenhuma classe extra */ }
+  if (!progressSaved) medalEl.classList.add("tier-gray");
+  else if (scorePct >= 100) { /* dourado — cor padrão do SVG, nenhuma classe extra */ }
   else if (completedForReal) medalEl.classList.add("tier-blue");
   else medalEl.classList.add("tier-gray");
   statTotal.textContent = phaseLen;
@@ -4571,12 +4619,13 @@ function finishPhase() {
     `${phaseLen} ${phaseLen === 1 ? "questão proposta" : "questões propostas"}, ${correctCount} ${correctCount === 1 ? "acertada" : "acertadas"}, ${incorrectCount} ${incorrectCount === 1 ? "errada" : "erradas"} e ${skippedCount} ${skippedCount === 1 ? "pulada" : "puladas"}.` +
     (incorrectCount || skippedCount ? " Erros e pulos não contam como fonema dominado — só o que sai certo conta pra concluir a fase." : "");
 
-  if (completedForReal && !reducedMotion) startFinalConfetti();
+  if (completedForReal && progressSaved && !reducedMotion) startFinalConfetti();
   playBeep(880, 0.3, "triangle", 0.25);
 }
 
 function restartPhase() {
   releasePendingPhaseAttempts();
+  advancePending = false;
   phaseSkipsUsed = 0;
   phaseAttemptCommitted = false;
   currentIndex = phaseStartIndex;
