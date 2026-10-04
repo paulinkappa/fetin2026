@@ -2595,8 +2595,9 @@ Rodada 61 — 2026-10-04 — DOCUMENTAÇÃO, VÍDEO, SEGURANÇA DO REPOSITÓRIO 
     scanning, push protection e proteção da main contra force-push e
     exclusão (sem exigir PR/revisão; administrador não é bloqueado).
     Dependabot mantido desligado por não haver dependências
-  - Reconhecimento (informado pelo desenvolvedor): o projeto recebeu um
-    prêmio de reconhecimento do programa de startups da faculdade, além
-    de elogios ao sistema como um todo e ao pitch. Nome do programa,
-    data e detalhes da premiação não foram informados — complementar
-    aqui quando houver
+  - Reconhecimento (informado pelo desenvolvedor): na FETIN, realizada de
+    24 a 26 de setembro de 2026, o projeto recebeu um prêmio de
+    reconhecimento do programa de startups da faculdade, além de elogios
+    ao sistema como um todo e ao pitch. Nome oficial do prêmio e
+    detalhes da premiação não foram informados — complementar aqui
+    quando houver
