@@ -2595,8 +2595,11 @@ Rodada 61 — 2026-10-04 — DOCUMENTAÇÃO, VÍDEO, SEGURANÇA DO REPOSITÓRIO 
     scanning, push protection e proteção da main contra force-push e
     exclusão (sem exigir PR/revisão; administrador não é bloqueado).
     Dependabot mantido desligado por não haver dependências
-  - Reconhecimento (informado pelo desenvolvedor): o projeto recebeu um
-    prêmio de reconhecimento do programa de startups da faculdade, além
-    de elogios ao sistema como um todo e ao pitch. Nome do programa,
-    data e detalhes da premiação não foram informados — complementar
-    aqui quando houver
+  - Reconhecimento (certificado transcrito pelo desenvolvedor): o Inatel
+    Startups conferiu reconhecimento ao projeto pelo destaque alcançado no
+    Prêmio Inatel Startups da 45ª FETIN (realizada de 24 a 26 de
+    setembro de 2026). Segundo o certificado, a equipe demonstrou atitude
+    empreendedora, visão de mercado, clareza na apresentação e espírito
+    inovador, com potencial para construir futuros negócios de
+    tecnologia. O projeto também recebeu elogios ao sistema como um todo
+    e ao pitch
