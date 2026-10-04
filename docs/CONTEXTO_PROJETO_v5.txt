@@ -2568,3 +2568,35 @@ Rodada 60 — 2026-09-24
   - Nenhum código incompleto/temporário/TODO adicional encontrado além
     do que já tinha sido varrido nas Rodadas 56 e 59
   - Cache-busting: script.js v=56 → v=57
+Rodada 61 — 2026-10-04 — DOCUMENTAÇÃO, VÍDEO, SEGURANÇA DO REPOSITÓRIO E RECONHECIMENTO
+  (nenhuma mudança em index.html/script.js/style.css nesta rodada —
+  portanto sem alteração de cache-busting)
+  - Registro retroativo das rodadas de 2026-09-24 pós-Rodada 60, que não
+    tinham entrada própria: README de verdade + docs/ARQUITETURA.md +
+    changelog movido pra docs/ (commit 102697e); identidade visual —
+    logo SVG/PNG e QR code do repositório em identidade-visual/ (6209c5c);
+    docs/ROADMAP.md e docs/MODELO-DE-NEGOCIO.md, separando implementado x
+    planejado x possibilidade, e preenchimento do campo About do
+    repositório (fbc9e68)
+  - Vídeo de apresentação à banca (16:9, 1920x1080, ~9min50, 23 cenas,
+    com capítulos): versões com narração (voz sintética pt-BR do Windows,
+    provisória) e sem narração, usando telas reais do app com dados
+    fictícios e os áudios reais dos fonemas. Gerado por HTML + Chrome
+    headless + ffmpeg. Fica FORA do repositório, em
+    D:\FETIN 2026\Paulo\video-apresentacao\ (fontes em fontes\, arquivos
+    intermediários em fontes\trabalho\, descartáveis)
+  - Auditoria de segurança do repositório (somente leitura): nenhum
+    segredo no histórico completo de commits, nenhum arquivo sensível
+    versionado, único colaborador é o dono, sem deploy keys/webhooks,
+    sem dependências de terceiros. Conta admin@admin / 123456 continua
+    pública no código por decisão de demonstração (isolada das contas
+    comuns; sai antes de qualquer uso com dados reais — ver ROADMAP)
+  - Configurações ligadas no GitHub (paulinkappa/fetin2026): secret
+    scanning, push protection e proteção da main contra force-push e
+    exclusão (sem exigir PR/revisão; administrador não é bloqueado).
+    Dependabot mantido desligado por não haver dependências
+  - Reconhecimento (informado pelo desenvolvedor): o projeto recebeu um
+    prêmio de reconhecimento do programa de startups da faculdade, além
+    de elogios ao sistema como um todo e ao pitch. Nome do programa,
+    data e detalhes da premiação não foram informados — complementar
+    aqui quando houver
