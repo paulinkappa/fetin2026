@@ -22,7 +22,7 @@ Textos enviados no formulário da FETIN (limites: seção 1 entre 80 e 150 carac
 
 **3. Tecnologia, metodologia e validação**
 
-> O VozAtiva roda direto no navegador, sem instalação, usando reconhecimento de fala, captura da voz pelo microfone, gravação de cada tentativa e proteção das senhas por criptografia. Diferente de apps que só treinam sons e de plataformas de teleterapia, une trilha gamificada, aprovação por um profissional real e gravações de voz humana, feminina e masculina. O desenvolvimento foi iterativo, em rodadas de melhoria com teste manual ao vivo e apoio de inteligência artificial. Validamos com três especialistas, uma em gerontecnologia e duas fonoaudiólogas: uma não conhecia iniciativa parecida e outra viu grande utilidade e sugeriu ampliar o público. Na FETIN, o público testou ao vivo todas as funcionalidades durante as apresentações, gerando feedback real de uso para aprimorar a ferramenta.
+> O VozAtiva roda direto no navegador, sem instalação, usando reconhecimento de fala, captura da voz pelo microfone, gravação de cada tentativa e proteção das senhas por criptografia. Diferente de apps que só treinam sons e de plataformas de teleterapia, une trilha gamificada, aprovação por um profissional real e gravações de voz humana, feminina e masculina. O desenvolvimento foi iterativo, com rodadas de melhoria, testes manuais e apoio de inteligência artificial. Validamos com três especialistas, uma em gerontecnologia e duas fonoaudiólogas: uma não conhecia iniciativa parecida e outra viu grande utilidade e sugeriu ampliar o público. Nas apresentações da FETIN, o público testou ao vivo todas as funcionalidades, gerando feedback real para aprimorar a ferramenta.
 
 **4. Funcionamento, requisitos e operação**
 
