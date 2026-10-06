@@ -22,6 +22,8 @@ Aplicativo web de treino de fala para pessoas em acompanhamento fonoaudiológico
 
 O projeto recebeu reconhecimento do **Inatel Startups** pelo destaque no **Prêmio Inatel Startups da 45ª FETIN** (Feira Tecnológica do Inatel, 24 a 26 de setembro de 2026): a equipe demonstrou atitude empreendedora, visão de mercado, clareza na apresentação e espírito inovador. Durante as apresentações, o público testou ao vivo todas as funcionalidades. Relatório, infográfico e detalhes em [`docs/FETIN-2026.md`](docs/FETIN-2026.md).
 
+<p align="center"><img src="docs/fetin/infografico-fetin-2026.png" alt="Infográfico do VozAtiva: objetivo, telas do app e impacto" width="560" /></p>
+
 ## O que o app faz
 
 **Paciente**
