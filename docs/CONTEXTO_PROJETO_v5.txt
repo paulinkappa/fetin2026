@@ -2728,3 +2728,19 @@ Rodada 66 — 2026-10-06
     de "autores" para "titular". Os créditos de autoria do projeto
     (idealizador, orientador, desenvolvedor) não mudam
 
+Rodada 67 — 2026-10-06 — CHECK-UP FINAL
+  - Check-up completo antes de encerrar: git (main e feature iguais ao
+    GitHub), nenhum segredo/telefone no repositório nem no histórico,
+    0 links relativos quebrados nos .md, 65/65 áudios em cada voz batendo
+    com BASE_GRUPOS, infográfico do repositório idêntico ao final, e
+    configurações do GitHub (tópicos, licença, secret scanning, push
+    protection, proteção da main, Pages desligado, issues ligadas)
+  - Teste de fumaça no navegador (Chrome headless, microfone simulado):
+    carrega sem erro de script, login admin@admin, trilha com 7 fases,
+    exercício abre o fonema A, botão de áudio toca
+  - Único defeito achado: o app não declarava ícone de aba, então o
+    navegador pedia /favicon.ico e recebia 404 (aviso no console). Corrigido
+    com <link rel="icon"> apontando pra identidade-visual/logo.svg em
+    index.html. script.js e style.css não mudaram — sem alteração de
+    cache-busting
+
