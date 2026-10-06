@@ -1,7 +1,18 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-10-06 (Rodada 62)
+  Última atualização: 2026-10-06 (Rodada 64)
 =============================================
+
+COMO LER ESTE ARQUIVO
+  - Seções abaixo (SOBRE O PROJETO até PLANO: ADAPTAÇÃO PARA CELULAR):
+    retrato do estado ATUAL do app (tecnologias, arquitetura, modelo de
+    dados, funcionalidades). Para uma visão resumida, leia o README.md
+    e docs/ARQUITETURA.md.
+  - HISTÓRICO DE ATUALIZAÇÕES (mais abaixo): uma entrada por rodada de
+    trabalho, da Rodada 1 à última, em ordem cronológica — registra o
+    porquê de cada decisão. Para achar algo, procure por "Rodada N" ou
+    por palavras-chave (ex.: "áudio", "tour", "ranking").
+  - Planos futuros e o que ainda não existe: docs/ROADMAP.md.
 
 ── SOBRE O PROJETO ──────────────────────────
 Aplicativo web de treino de fala para pessoas com deficiência auditiva ou
@@ -581,9 +592,9 @@ ACESSIBILIDADE E QUALIDADE DE CLIQUE
     trocar de conta se redesenham com o dado mais novo)
 
 ── PENDÊNCIAS / PRÓXIMOS PASSOS ─────────────
-  - Preencher os nomes reais no painel de Créditos (idealizador,
-    orientador, médicos consultados, identidade visual) — hoje aparecem
-    como "A definir" porque ainda não foram informados
+(Visão geral e atualizada em docs/ROADMAP.md; esta lista é o histórico.)
+  - [RESOLVIDO] Nomes reais no painel de Créditos (idealizador,
+    orientador, especialistas consultados) — preenchidos no app
   - Reconhecimento de fala real integrado (Rodada 10); ainda compara o
     TEXTO reconhecido pelo motor do navegador, não a qualidade fonética/
     articulatória da pronúncia em si (ex.: não avalia sotaque, clareza ou
@@ -2658,3 +2669,36 @@ Rodada 63 — 2026-10-06
     tópicos (não imagem); uma imagem de pré-visualização do repositório
     ("Social preview", 1280x640) só pode ser enviada manualmente em
     Settings do repositório — não é possível via API
+
+Rodada 64 — 2026-10-06 — REVISÃO DE LEGIBILIDADE DO REPOSITÓRIO
+  (nenhuma mudança em index.html/script.js/style.css — sem alteração de
+  cache-busting)
+  - Pedido do usuário: revisar tudo o que está no GitHub para que quem
+    entrar no repositório encontre as informações de forma direta e
+    completa; gerar a imagem de pré-visualização 1280x640
+  - Nova imagem identidade-visual/social-preview-1280x640.png (309 KB,
+    abaixo do limite de 1 MB do GitHub). O envio como "Social preview"
+    só é possível manualmente em Settings do repositório
+  - README reescrito para ser autoexplicativo: quadro "Em resumo"
+    (problema, objetivo, público, estado atual, o que não existe),
+    "Como funciona na prática" (fluxo em 6 passos e como o app decide se
+    a fala está certa), "Teste rápido (demonstração)" com o caminho
+    rápido (admin@admin) e o completo (paciente + fonoaudiólogo, vínculo
+    por ID e confirmação do convite), "Requisitos e compatibilidade",
+    "Limitações conhecidas", tabela de documentação, "Equipe e créditos"
+    e "Contato e licença" (abrir issue; licença ainda não definida —
+    decisão pendente do autor)
+  - Novo docs/README.md: índice da documentação, o que cada arquivo
+    responde e a convenção de status (implementado/planejado/possível)
+  - CORREÇÃO DE PRECISÃO: a documentação dizia que dados nunca saem do
+    dispositivo / que o app não faz chamadas de rede. O app em si não
+    envia nada a servidor do projeto, mas o reconhecimento de fala (Web
+    Speech API) é processado pelo serviço online do navegador
+    (Chrome/Edge). README (requisitos e limitações), ROADMAP (segurança,
+    integrações, LGPD) foram corrigidos. ATENÇÃO: o vídeo da banca (cena
+    de segurança) ainda diz "nada é enviado pela rede" — ajustar se o
+    vídeo for usado de novo
+  - Changelog: adicionado bloco "COMO LER ESTE ARQUIVO" no topo e a
+    pendência "Créditos com A definir" marcada como resolvida (os nomes já
+    estão no app); a seção de pendências aponta para o ROADMAP
+

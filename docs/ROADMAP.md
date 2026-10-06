@@ -36,15 +36,15 @@ Nenhuma dessas quatro etapas foi iniciada — são passos definidos, não trabal
 |---|---|
 | Senha nunca em texto puro (SHA-256 + sal único por conta) | ✅ Implementado |
 | Conta administradora de demonstração isolada (`isCurrentUserAdmin`, sem exposição a contas comuns) | ✅ Implementado |
-| Dados apenas no dispositivo do usuário, nunca transmitidos pela rede | ✅ Implementado (por não existir backend ainda) |
+| Contas, progresso e gravações ficam apenas no dispositivo; o app não envia dados a nenhum servidor do projeto | ✅ Implementado (por não existir backend ainda). Ressalva: o reconhecimento de fala (Web Speech API) é processado pelo serviço online do navegador (Chrome/Edge). |
 | Autenticação server-side (sessão/JWT) | 📋 Planejado — ver evolução de arquitetura acima |
 | Banco de dados real com controle de acesso por usuário | 📋 Planejado |
-| Conformidade formal com a LGPD (dado de saúde é dado sensível) | 💡 Possibilidade — necessário antes de qualquer uso com dados reais de pacientes fora de demonstração; hoje não há coleta de dados que saia do próprio aparelho. |
+| Conformidade formal com a LGPD (dado de saúde é dado sensível) | 💡 Possibilidade — necessário antes de qualquer uso com dados reais de pacientes fora de demonstração; hoje o app não envia dados a nenhum servidor do projeto, mas o áudio do reconhecimento de fala é processado pelo serviço online do navegador (Chrome/Edge) — ponto a avaliar nessa análise. |
 | Criptografia de dados em repouso no servidor | 💡 Possibilidade — depende do backend existir primeiro. |
 
 ## Possíveis integrações
 
-Nenhuma integração externa existe hoje — o app não faz nenhuma chamada de rede a serviços de terceiros (só carrega 2 fontes do Google Fonts). Integrações abaixo são **possibilidades**, não compromissos:
+Nenhuma integração externa própria existe hoje — o app não chama nenhum serviço de terceiros por conta própria (só carrega 2 fontes do Google Fonts); a única comunicação externa é o reconhecimento de fala que o próprio navegador faz (Web Speech API). Integrações abaixo são **possibilidades**, não compromissos:
 
 - 💡 Gateway de pagamento (Mercado Pago, Pagar.me ou Stripe) — necessário se o modelo B2B2C avançar (ver seção de monetização).
 - 💡 Serviço de reconhecimento de fala especializado em terapia da fala — alternativa mais precisa que a Web Speech API nativa do navegador.
