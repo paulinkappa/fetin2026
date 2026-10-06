@@ -2721,3 +2721,10 @@ Rodada 65 — 2026-10-06 — TÓPICOS, LICENÇA E ESCLARECIMENTOS
     "nada é enviado pela rede" na cena de segurança do vídeo não precisa
     ser corrigida enquanto ele for só interno
 
+Rodada 66 — 2026-10-06
+  - Titular da licença (arquivo LICENSE) alterado, a pedido do usuário,
+    para apenas "Paulo Ricardo Mendes Cândido" (antes: Luan Campos e
+    Paulo Ricardo Mendes Cândido). Textos de LICENSE e README ajustados
+    de "autores" para "titular". Os créditos de autoria do projeto
+    (idealizador, orientador, desenvolvedor) não mudam
+
