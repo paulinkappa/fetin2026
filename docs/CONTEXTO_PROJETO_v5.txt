@@ -2744,3 +2744,12 @@ Rodada 67 — 2026-10-06 — CHECK-UP FINAL
     index.html. script.js e style.css não mudaram — sem alteração de
     cache-busting
 
+Rodada 68 — 2026-10-06
+  - Recontagem de caracteres das 4 seções do relatório da FETIN: seções 1,
+    2 e 4 dentro dos limites com folga (144, 677 e 727); a seção 3 estava
+    com 795 de 800, apertada demais caso o formulário conte acentos
+    decompostos ou bytes. Encurtada para 773 (792 mesmo em bytes UTF-8),
+    sem perder nenhum conteúdo pedido (teste de campo ao vivo na FETIN,
+    validação por 3 especialistas, diferencial, tecnologia). Texto
+    atualizado em docs/FETIN-2026.md
+
