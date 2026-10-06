@@ -38,7 +38,7 @@ Cada conta (`users[email]`) guarda, entre outros campos: `role` (`"paciente"` ou
 
 ## Fonemas e treino
 
-- **`BASE_GRUPOS`** (script.js) — os 65 fonemas reais do app, em 7 grupos (Vogais + 6 pares de letras). É a fonte da verdade: qualquer novo fonema/grupo começa aqui.
+- **`BASE_GRUPOS`** (script.js) — os 65 fonemas do app, em 7 grupos (Vogais + 6 pares de letras) — um conjunto inicial, pensado para crescer. É a fonte da verdade: qualquer novo fonema/grupo começa aqui.
 - **`BASE_DICAS`** — uma instrução de pronúncia por fonema, mostrada durante o treino.
 - **`fonemas-audio/feminina/` e `fonemas-audio/masculina/`** — gravações reais, uma por fonema por voz (ver [README da pasta](../fonemas-audio/LEIA-ME.txt)). `playPhonemeAudio()` escolhe a pasta pelo `voiceGender` selecionado (♀/♂) e nunca mistura as duas; se o arquivo não existir, cai pra síntese de voz do navegador.
 - **Loop de exercício** (`loadChallenge` → `toggleRecording`/reconhecimento de fala → `finishRecording` → `advance`) — um fonema por vez, com uma trava (`advancePending`) entre confirmar a resposta e carregar o próximo, pra clique duplo não pular um fonema em silêncio.

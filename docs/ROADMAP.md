@@ -12,7 +12,7 @@ Convenção usada em todo o documento:
 
 | Funcionalidade | Status | Nota |
 |---|---|---|
-| Família de fonemas G (GA-GU) na voz feminina | 📋 Planejado | Já gravada e completa na voz masculina (65/65); falta gravar essa família na voz da Anna Clara — único fonema/voz pendente hoje. |
+| Ampliar o conjunto de fonemas além dos 65 iniciais | 📋 Planejado | Os 65 fonemas atuais (7 grupos) são o conjunto inicial e as duas vozes (Anna Clara e Paulo Ricardo) já estão 100% gravadas (65/65). Novos grupos entram por `BASE_GRUPOS` e ganham áudio gravado nas duas pastas — enquanto não houver gravação, o app usa a síntese de voz do navegador. Nada disso foi iniciado. |
 | Reconhecimento de fala com avaliação fonética real (não só heurística de volume) | 💡 Possibilidade | Hoje a verificação usa a Web Speech API do navegador com um heurístico de volume/duração como reserva — uma avaliação fonética mais precisa exigiria um serviço especializado, fora do escopo local atual. |
 | Notificações reais agendadas (lembrete de treino diário) | 💡 Possibilidade | Levantado como parte da adaptação para celular/PWA — exige Service Worker, não implementado. |
 | Modo de alto contraste dedicado / tamanho de fonte ajustável pelo app | 💡 Possibilidade | Hoje o app já é responsivo e tem tema claro/escuro; um modo de contraste dedicado e escala de fonte configurável foram citados como melhoria futura, não iniciados. |
@@ -55,7 +55,7 @@ Nenhuma integração externa existe hoje — o app não faz nenhuma chamada de r
 
 Resumo do caminho — detalhado com custos, preços e prioridades em [`docs/MODELO-DE-NEGOCIO.md`](MODELO-DE-NEGOCIO.md):
 
-1. ✅ **Hoje**: protótipo funcional completo, validado por 3 especialistas (Gerontecnologia + 2 fonoaudiólogas), sem backend, uso local/demonstração.
+1. ✅ **Hoje**: protótipo funcional completo, avaliado por 3 especialistas (Gerontecnologia + 2 fonoaudiólogas) e testado ao vivo pelo público durante as apresentações da 45ª FETIN (24 a 26/09/2026), onde recebeu reconhecimento no Prêmio Inatel Startups — sem backend, uso local/demonstração. Validação clínica formal ainda não realizada (ver [`docs/FETIN-2026.md`](FETIN-2026.md)).
 2. 📋 **Próximo passo real**: validar em uso contínuo com fonoaudiólogos de verdade (não só opinião pontual) antes de qualquer investimento em backend.
 3. 💡 **Se validado**: backend → banco de dados → autenticação real → pagamentos (ordem da seção de arquitetura acima).
 4. 💡 **Se comercializado**: modelo B2B2C, começando por uma clínica-escola ou parceria institucional como primeiro cliente.
@@ -83,7 +83,7 @@ Análise completa (modelo recomendado, preços, custos, concorrentes) em [`docs/
 
 Ordem sugerida, da mais pra menos imediata:
 
-1. **Agora**: gravar a família G da voz feminina (único conteúdo pendente).
+1. **Agora**: nenhum conteúdo pendente — os 65 fonemas estão gravados nas duas vozes. O próximo conteúdo possível é ampliar o conjunto de fonemas (ver tabela de funcionalidades planejadas).
 2. **Curto prazo**: validar o app em uso real e contínuo com fonoaudiólogos, fora do ambiente de demonstração acadêmica.
 3. **Médio prazo, se validado**: iniciar a evolução de arquitetura (backend → banco de dados → autenticação real), nessa ordem — não pular etapas.
 4. **Médio/longo prazo, se avançar**: camada de pagamentos e modelo B2B2C, começando por uma clínica-escola ou parceria institucional.

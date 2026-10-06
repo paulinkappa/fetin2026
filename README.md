@@ -10,6 +10,7 @@ Aplicativo web de treino de fala para pessoas em acompanhamento fonoaudiológico
 
 ## Índice
 
+- [Reconhecimento](#reconhecimento)
 - [O que o app faz](#o-que-o-app-faz)
 - [Tecnologias](#tecnologias)
 - [Estrutura do repositório](#estrutura-do-repositório)
@@ -17,10 +18,14 @@ Aplicativo web de treino de fala para pessoas em acompanhamento fonoaudiológico
 - [Como testar](#como-testar)
 - [Manutenção e desenvolvimento](#manutenção-e-desenvolvimento)
 
+## Reconhecimento
+
+O projeto recebeu reconhecimento do **Inatel Startups** pelo destaque no **Prêmio Inatel Startups da 45ª FETIN** (Feira Tecnológica do Inatel, 24 a 26 de setembro de 2026): a equipe demonstrou atitude empreendedora, visão de mercado, clareza na apresentação e espírito inovador. Durante as apresentações, o público testou ao vivo todas as funcionalidades. Relatório, infográfico e detalhes em [`docs/FETIN-2026.md`](docs/FETIN-2026.md).
+
 ## O que o app faz
 
 **Paciente**
-- Treina os 65 fonemas do português (vogais + 6 pares de letras) em uma trilha de fases progressiva, com reconhecimento de fala real (Web Speech API) e feedback imediato.
+- Treina os 65 fonemas iniciais do português (vogais + 6 pares de letras, conjunto pensado para crescer) em uma trilha de fases progressiva, com reconhecimento de fala real (Web Speech API) e feedback imediato.
 - Ouve a pronúncia correta de cada fonema em voz feminina ou masculina (gravações reais, não só síntese de voz).
 - Acompanha sequência diária (streak), ranking entre amigos, e um nível de "Revisão" para fonemas que o fonoaudiólogo pediu pra repetir.
 - Tem uma central de exercícios práticos (vídeos) e um chat com contas vinculadas (fonoaudiólogo, amigos).
@@ -39,6 +44,8 @@ Tour guiado (spotlight) e central de ajuda embutidos, acessibilidade (navegaçã
 - **`localStorage`** — contas, progresso, mensagens de texto (ver [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) para o modelo de dados completo).
 - **`IndexedDB`** — mídia grande (áudio de tentativas, anexos de chat, vídeos de exercício).
 - **Web Audio API** (`AudioContext`/`AnalyserNode`) — captura e visualização (waveform) do microfone em tempo real.
+- **MediaRecorder** — grava o áudio de cada tentativa, para o fonoaudiólogo ouvir e aprovar.
+- **Web Crypto** — hash SHA-256 com sal único por conta; a senha nunca é guardada em texto puro.
 
 Nenhuma dependência de terceiros é baixada em tempo de execução, exceto duas Google Fonts carregadas por `<link>`.
 
@@ -58,6 +65,8 @@ Nenhuma dependência de terceiros é baixada em tempo de execução, exceto duas
 ├── docs/
 │   ├── ARQUITETURA.md           # como o código está organizado por dentro
 │   ├── ROADMAP.md               # planos futuros — implementado x planejado x possibilidade
+│   ├── FETIN-2026.md            # reconhecimento na 45ª FETIN, relatório e infográfico
+│   ├── fetin/                   # infográfico (1400x1400) do relatório da FETIN
 │   ├── MODELO-DE-NEGOCIO.md     # análise de monetização (nenhuma decisão tomada ainda)
 │   └── CONTEXTO_PROJETO_v5.txt  # changelog detalhado, rodada a rodada
 ├── .claude/
