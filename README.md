@@ -195,7 +195,7 @@ Não há suíte de testes automatizados — é um projeto de demonstração acad
 
 ## Contato e licença
 
-Dúvidas, sugestões ou interesse no projeto: abra uma [issue](https://github.com/paulinkappa/fetin2026/issues) neste repositório. O repositório é público para consulta e avaliação, com **todos os direitos reservados**: não há licença de uso, cópia, modificação ou uso comercial sem autorização dos autores. Veja o arquivo [`LICENSE``](LICENSE).
+Dúvidas, sugestões ou interesse no projeto: abra uma [issue](https://github.com/paulinkappa/fetin2026/issues) neste repositório. O repositório é público para consulta e avaliação, com **todos os direitos reservados**: não há licença de uso, cópia, modificação ou uso comercial sem autorização do titular (Paulo Ricardo Mendes Cândido). Veja o arquivo [`LICENSE``](LICENSE).
 
 ## Acesso rápido
 
