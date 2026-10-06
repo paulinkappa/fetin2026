@@ -2648,3 +2648,13 @@ Rodada 62 — 2026-10-06 — REVISÃO GERAL DA DOCUMENTAÇÃO E FECHAMENTO DA FE
   - Segurança do GitHub (feito antes, Rodada 61): secret scanning, push
     protection e proteção da main continuam ativos
 
+
+Rodada 63 — 2026-10-06
+  - Pedido do usuário: colocar o infográfico no GitHub, "na aba de info"
+  - Feito: infográfico exibido direto no README (seção Reconhecimento),
+    na página principal do repositório; o arquivo já estava em
+    docs/fetin/infografico-fetin-2026.png (Rodada 62)
+  - Observação: o campo "About" do GitHub só aceita descrição, site e
+    tópicos (não imagem); uma imagem de pré-visualização do repositório
+    ("Social preview", 1280x640) só pode ser enviada manualmente em
+    Settings do repositório — não é possível via API
