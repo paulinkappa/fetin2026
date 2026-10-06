@@ -42,7 +42,7 @@ Não existe comparável brasileiro em B2B2C de fonoaudiologia com preço públic
 
 ## Próximas etapas comerciais (se avançar)
 
-1. Validar com fonoaudiólogos reais em uso contínuo (não só a opinião pontual já coletada de 3 especialistas) antes de cobrar de qualquer um.
+1. Validar com fonoaudiólogos reais em uso contínuo (não só a opinião pontual já coletada de 3 especialistas e o teste ao vivo feito pelo público na FETIN 2026, ver [`docs/FETIN-2026.md`](FETIN-2026.md)) antes de cobrar de qualquer um.
 2. Testar disposição a pagar (pesquisa/entrevista) antes de construir o backend inteiro.
 3. Buscar uma clínica-escola ou parceria com a própria instituição de ensino como primeiro "cliente".
 4. Formalizar (CNPJ, termos de uso, política de privacidade) antes de cobrar de qualquer pessoa de verdade.

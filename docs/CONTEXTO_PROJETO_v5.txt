@@ -1,6 +1,6 @@
 =============================================
   VOZATIVA — Contexto do Projeto (v5)
-  Última atualização: 2026-09-24 (Rodada 60)
+  Última atualização: 2026-10-06 (Rodada 62)
 =============================================
 
 ── SOBRE O PROJETO ──────────────────────────
@@ -33,10 +33,15 @@ social e acompanhamento clínico remoto.
   suporte ou falha de permissão — ver seção de TREINO)
 - Pointer Events API — usada para o arrastar-e-soltar (drag-and-drop) de
   reordenação de fases, funciona com mouse e toque
-- LocalStorage — única camada de persistência (contas, sessão, progresso,
-  tema, tours já vistos, conteúdo personalizado por paciente, amizades)
+- LocalStorage — contas, sessão, progresso, tema, tours já vistos,
+  conteúdo personalizado por paciente, amizades e mensagens de texto
+- IndexedDB ("vozativa_media") — binários grandes: áudio das tentativas,
+  mídia do chat e vídeos de exercício (ver MODELO DE DADOS)
+- MediaRecorder — grava o áudio de cada tentativa para auditoria
+- Web Crypto — hash SHA-256 com sal por conta
 - Notifications API (permissão real de notificações do browser)
-- Fontes: Google Fonts — Nunito + Baloo 2
+- Fontes: Google Fonts — Quicksand (títulos) + Karla (corpo/botões),
+  trocadas na Rodada 37 (antes: Baloo 2 + Nunito)
 
 ── ARQUITETURA ──────────────────────────────
 Três arquivos principais (sem build step, abrir index.html ou servir como
@@ -2603,3 +2608,43 @@ Rodada 61 — 2026-10-04 — DOCUMENTAÇÃO, VÍDEO, SEGURANÇA DO REPOSITÓRIO 
     inovador, com potencial para construir futuros negócios de
     tecnologia. O projeto também recebeu elogios ao sistema como um todo
     e ao pitch
+
+Rodada 62 — 2026-10-06 — REVISÃO GERAL DA DOCUMENTAÇÃO E FECHAMENTO DA FETIN
+  (nenhuma mudança em index.html/script.js/style.css — sem alteração de
+  cache-busting)
+  - Pedido do usuário: finalizar a FETIN, atualizar o GitHub e revisar
+    toda a documentação do projeto contra o código
+  - Conferido contra o código: ARQUITETURA.md (telas, constantes
+    PHASE_COMPLETION_THRESHOLD=65 e SKIP_LIMIT_PER_PHASE=3, funções
+    citadas, chaves de localStorage, IndexedDB "vozativa_media") e
+    fonemas-audio/LEIA-ME.txt (65/65 nas duas pastas) — corretos
+  - Corrigido (estava desatualizado): ROADMAP.md ainda listava a família
+    G (GA-GU) da voz feminina como pendente, mas as duas vozes estão
+    65/65 desde a Rodada 60; a linha virou "ampliar o conjunto de
+    fonemas além dos 65 iniciais" (planejado, não iniciado) e o item
+    "Agora" do roadmap passou a dizer que não há conteúdo pendente
+  - Corrigido: cabeçalho deste changelog — data/rodada, fontes (Quicksand
+    + Karla desde a Rodada 37, não mais Nunito + Baloo 2) e camadas de
+    persistência (localStorage + IndexedDB, MediaRecorder, Web Crypto;
+    antes dizia que localStorage era a única)
+  - README: seção "Reconhecimento" (Prêmio Inatel Startups, 45ª FETIN),
+    MediaRecorder e Web Crypto na lista de tecnologias, "65 fonemas
+    iniciais" (conjunto pensado para crescer), nova entrada docs/ na
+    árvore do repositório
+  - Novo docs/FETIN-2026.md: reconhecimento, textos do relatório da
+    revista (seções 1 a 4, dentro dos limites de caracteres) e infográfico
+    1400x1400 (docs/fetin/infografico-fetin-2026.png, sem telefone
+    pessoal; telas reais com dados fictícios)
+  - ROADMAP.md e MODELO-DE-NEGOCIO.md passaram a citar o teste ao vivo
+    do público e o reconhecimento na FETIN como estágio atual, sem
+    afirmar validação clínica (que continua não realizada)
+  - Decisões de conteúdo do relatório: o app NÃO tem modelo treinado
+    (usa o reconhecimento de fala do navegador + heurística de
+    volume/duração), então o texto fala em "feedback real de uso para
+    aprimorar a ferramenta", não em "treinar o modelo"; o rodapé do
+    infográfico não traz telefone
+  - O vídeo da banca (~10min20, 24 cenas, com e sem narração) continua
+    FORA do repositório, em D:\FETIN 2026\Pauloideo-apresentacao    (arquivos grandes; fontes reproduzíveis na subpasta fontes\)
+  - Segurança do GitHub (feito antes, Rodada 61): secret scanning, push
+    protection e proteção da main continuam ativos
+
