@@ -33,7 +33,3 @@ Textos enviados no formulário da FETIN (limites: seção 1 entre 80 e 150 carac
 ![Infográfico do VozAtiva para a revista da FETIN](fetin/infografico-fetin-2026.png)
 
 As telas mostradas no infográfico são reais, com dados fictícios de demonstração.
-
-## Vídeo de apresentação
-
-O vídeo usado para a banca de aprovação (cerca de 10 minutos, 16:9, com e sem narração) não faz parte do repositório por causa do tamanho dos arquivos.

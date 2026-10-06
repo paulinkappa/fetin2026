@@ -137,6 +137,7 @@ Nenhuma dependência de terceiros é baixada em tempo de execução, exceto duas
 │   ├── launch.json              # configuração do servidor local de dev
 │   └── static-server.ps1        # servidor HTTP estático (PowerShell, sem dependências)
 ├── Iniciar VozAtiva.bat         # atalho Windows: sobe o servidor e abre o navegador
+├── LICENSE                      # todos os direitos reservados
 └── .gitignore
 ```
 
@@ -194,7 +195,7 @@ Não há suíte de testes automatizados — é um projeto de demonstração acad
 
 ## Contato e licença
 
-Dúvidas, sugestões ou interesse no projeto: abra uma [issue](https://github.com/paulinkappa/fetin2026/issues) neste repositório. Ainda não há uma licença de uso definida para o código e os materiais deste repositório.
+Dúvidas, sugestões ou interesse no projeto: abra uma [issue](https://github.com/paulinkappa/fetin2026/issues) neste repositório. O repositório é público para consulta e avaliação, com **todos os direitos reservados**: não há licença de uso, cópia, modificação ou uso comercial sem autorização dos autores. Veja o arquivo [`LICENSE``](LICENSE).
 
 ## Acesso rápido
 

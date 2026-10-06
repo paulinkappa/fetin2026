@@ -2695,10 +2695,29 @@ Rodada 64 — 2026-10-06 — REVISÃO DE LEGIBILIDADE DO REPOSITÓRIO
     envia nada a servidor do projeto, mas o reconhecimento de fala (Web
     Speech API) é processado pelo serviço online do navegador
     (Chrome/Edge). README (requisitos e limitações), ROADMAP (segurança,
-    integrações, LGPD) foram corrigidos. ATENÇÃO: o vídeo da banca (cena
-    de segurança) ainda diz "nada é enviado pela rede" — ajustar se o
-    vídeo for usado de novo
+    integrações, LGPD) foram corrigidos. (O vídeo de teste, fora do
+    repositório, ainda diz "nada é enviado pela rede" — ver Rodada 65)
   - Changelog: adicionado bloco "COMO LER ESTE ARQUIVO" no topo e a
     pendência "Créditos com A definir" marcada como resolvida (os nomes já
     estão no app); a seção de pendências aponta para o ROADMAP
+
+Rodada 65 — 2026-10-06 — TÓPICOS, LICENÇA E ESCLARECIMENTOS
+  (nenhuma mudança em index.html/script.js/style.css — sem alteração de
+  cache-busting)
+  - Tópicos do repositório definidos no GitHub: fonoaudiologia,
+    terapia-da-fala, speech-therapy, reabilitacao-auditiva,
+    acessibilidade, gamificacao, web-speech-api, javascript, vanilla-js,
+    fetin
+  - Licença: escolhida pelo usuário a opção "todos os direitos
+    reservados" (código visível para avaliação, sem licença de uso,
+    cópia, modificação ou uso comercial sem autorização). Arquivo LICENSE
+    adicionado, com titulares "Luan Campos e Paulo Ricardo Mendes
+    Cândido" — conferir se os titulares estão certos. README atualizado
+  - Demonstração online (GitHub Pages): sugerida e RECUSADA pelo usuário;
+    não habilitar
+  - Esclarecimento: o vídeo da banca (fora do repositório) é apenas um
+    teste interno do desenvolvedor e não será público; por isso a seção
+    sobre o vídeo foi retirada de docs/FETIN-2026.md. A imprecisão
+    "nada é enviado pela rede" na cena de segurança do vídeo não precisa
+    ser corrigida enquanto ele for só interno
 
